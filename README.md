@@ -48,3 +48,5 @@ Useful environment variables:
 - `REMOTE_TARGET` – `scp` destination for deployment; leave blank to skip copying
 
 The scripts expect an OpenAI API key at `~/.openai.key`.
+
+All Python entry points are run via [`uv`](https://docs.astral.sh/uv/) (for example, `uv run psalm_pairs/generate_pairs.py`).
