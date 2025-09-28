@@ -5,11 +5,19 @@ import argparse
 import json
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Any, Dict
 
-from . import DB_PATH
-from .db import connect, insert_evaluation, pending_evaluations
-from .openai_client import build_client, response_to_dict
+if __package__ in {None, ""}:
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+    from psalm_pairs import DB_PATH
+    from psalm_pairs.db import connect, insert_evaluation, pending_evaluations
+    from psalm_pairs.openai_client import build_client, response_to_dict
+else:
+    from . import DB_PATH
+    from .db import connect, insert_evaluation, pending_evaluations
+    from .openai_client import build_client, response_to_dict
 
 DEFAULT_LIMIT = 50
 EVALUATOR_MODEL = os.environ.get("PSALM_PAIRS_EVAL_MODEL", "gpt-5")

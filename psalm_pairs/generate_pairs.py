@@ -4,11 +4,20 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
+from pathlib import Path
 
-from . import DB_PATH
-from .db import connect, insert_pair_argument, pending_pairs
-from .openai_client import build_client, response_to_dict
-from .psalms import format_psalm
+if __package__ in {None, ""}:
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+    from psalm_pairs import DB_PATH
+    from psalm_pairs.db import connect, insert_pair_argument, pending_pairs
+    from psalm_pairs.openai_client import build_client, response_to_dict
+    from psalm_pairs.psalms import format_psalm
+else:
+    from . import DB_PATH
+    from .db import connect, insert_pair_argument, pending_pairs
+    from .openai_client import build_client, response_to_dict
+    from .psalms import format_psalm
 
 DEFAULT_LIMIT = 50
 DEFAULT_MODEL = os.environ.get("PSALM_PAIRS_MODEL", "gpt-5")
