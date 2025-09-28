@@ -4,11 +4,17 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import html
+import sys
 from pathlib import Path
 from typing import Iterable
 
-from . import PROJECT_ROOT
-from .db import connect, counts, recent_arguments
+if __package__ in {None, ""}:
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+    from psalm_pairs import PROJECT_ROOT
+    from psalm_pairs.db import connect, counts, recent_arguments
+else:
+    from . import PROJECT_ROOT
+    from .db import connect, counts, recent_arguments
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "site"
 
