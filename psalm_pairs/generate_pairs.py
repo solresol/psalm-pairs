@@ -13,7 +13,7 @@ from .psalms import format_psalm
 DEFAULT_LIMIT = 50
 DEFAULT_MODEL = os.environ.get("PSALM_PAIRS_MODEL", "gpt-5")
 
-PROMPT_TEMPLATE = """Consider Psalm {x} and Psalm {y} (reproduced below). What arguments could you make to justify that Psalm {y} follows on from Psalm {x}? Consider stylistic similarities, similarities of vocab or ideas, connections to sequences of events common in ancient Israel life, mythology or history. Answer in English.\n\nPsalm {x}:\n{psalm_x}\n\nPsalm {y}:\n{psalm_y}\n"""
+PROMPT_TEMPLATE = """Consider Psalm {x} and Psalm {y} (reproduced below). What arguments could you make to justify that Psalm {y} logically follows on from Psalm {x}? Consider stylistic similarities, similarities of form, similarities of vocab or ideas, shared roots (if you're doing the search in Hebrew), connections to sequences of events common in ancient Israelite life, mythology or history shared by the two psalms.\n\nRarer words are more significant than commoner words. Identical forms are more significant than similar forms. The same word class is more significant than different word classes formed from the same root. Identical roots are more significant than suppletive roots.\n\nPsalm {x}:\n{psalm_x}\n\nPsalm {y}:\n{psalm_y}\n"""
 
 
 logger = logging.getLogger(__name__)
