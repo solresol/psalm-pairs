@@ -25,14 +25,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <meta charset=\"utf-8\">
   <title>Psalm Pair Arguments</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; background: #f8f9fa; color: #111; }
-    header { margin-bottom: 2rem; }
-    .stats { display: flex; flex-wrap: wrap; gap: 1rem; }
-    .card { background: white; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    table { width: 100%; border-collapse: collapse; margin-top: 2rem; }
-    th, td { padding: 0.5rem; border-bottom: 1px solid #ddd; text-align: left; }
-    th { background: #eef2f7; }
-    footer { margin-top: 3rem; font-size: 0.9rem; color: #555; }
+    body {{ font-family: system-ui, sans-serif; margin: 2rem; background: #f8f9fa; color: #111; }}
+    header {{ margin-bottom: 2rem; }}
+    .stats {{ display: flex; flex-wrap: wrap; gap: 1rem; }}
+    .card {{ background: white; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 2rem; }}
+    th, td {{ padding: 0.5rem; border-bottom: 1px solid #ddd; text-align: left; }}
+    th {{ background: #eef2f7; }}
+    footer {{ margin-top: 3rem; font-size: 0.9rem; color: #555; }}
   </style>
 </head>
 <body>
@@ -97,7 +97,7 @@ def format_row(row) -> str:
 
 
 def render_html(stats: dict, rows: Iterable[str]) -> str:
-    generated_at = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    generated_at = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S")
     generated = stats["generated"]
     evaluated = stats["evaluated"]
     total_pairs = stats["total_pairs"]
