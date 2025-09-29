@@ -19,11 +19,11 @@ else:
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "site"
 
 
-HTML_TEMPLATE = """<!DOCTYPE html>
+DIAGNOSTICS_TEMPLATE = """<!DOCTYPE html>
 <html lang=\"en\">
 <head>
   <meta charset=\"utf-8\">
-  <title>Psalm Pair Arguments</title>
+  <title>Psalm Pair Diagnostics</title>
   <style>
     body {{ font-family: system-ui, sans-serif; margin: 2rem; background: #f8f9fa; color: #111; }}
     header {{ margin-bottom: 2rem; }}
@@ -45,13 +45,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1>Psalm Pair Arguments</h1>
-  <p>Progress report generated on {generated_at} UTC.</p>
+  <h1>Diagnostics &amp; progress</h1>
+  <p>Report generated on {generated_at} UTC.</p>
 </header>
 <nav>
-  <a href=\"index.html\">Overview</a>
+  <a href=\"index.html\">Heatmap</a>
+  <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"tokens.html\">Token usage</a>
-  <a href=\"heatmap.html\">Heatmap</a>
 </nav>
 <section class=\"stats\">
   <div class=\"card\">
@@ -120,9 +120,9 @@ TOKENS_TEMPLATE = """<!DOCTYPE html>
   <p>Breakdown of model token consumption across argument generation and evaluation.</p>
 </header>
 <nav>
-  <a href=\"index.html\">Overview</a>
+  <a href=\"index.html\">Heatmap</a>
+  <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"tokens.html\">Token usage</a>
-  <a href=\"heatmap.html\">Heatmap</a>
 </nav>
 <section class=\"grid\">
   <div class=\"card\">
@@ -200,9 +200,9 @@ HEATMAP_TEMPLATE = """<!DOCTYPE html>
   <p>Visual overview of generation and evaluation coverage across all ordered psalm pairs.</p>
 </header>
 <nav>
-  <a href=\"index.html\">Overview</a>
+  <a href=\"index.html\">Heatmap</a>
+  <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"tokens.html\">Token usage</a>
-  <a href=\"heatmap.html\">Heatmap</a>
 </nav>
 <section>
   <p>Generated {generated} of {total_pairs} possible ordered pairs ({progress:.2f}% complete) and evaluated {evaluated} pairs ({evaluation_progress:.2f}% complete).</p>
@@ -266,9 +266,9 @@ PAIR_TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <nav>
-  <a href=\"../index.html\">Overview</a>
+  <a href=\"../index.html\">Heatmap</a>
+  <a href=\"../diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"../tokens.html\">Token usage</a>
-  <a href=\"../heatmap.html\">Heatmap</a>
 </nav>
 <main>
   <section>
@@ -303,7 +303,7 @@ PAIR_TEMPLATE = """<!DOCTYPE html>
   </section>
 </main>
 <footer>
-  <p>Return to the <a href=\"../index.html\">overview</a> for additional pairs.</p>
+  <p>Return to the <a href=\"../index.html\">heatmap overview</a> for additional pairs.</p>
 </footer>
 </body>
 </html>
@@ -348,14 +348,14 @@ def format_row(row) -> str:
 
 
 
-def render_html(stats: dict, rows: Iterable[str], tokens: dict) -> str:
+def render_diagnostics_html(stats: dict, rows: Iterable[str], tokens: dict) -> str:
     generated_at = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S")
     generated = stats["generated"]
     evaluated = stats["evaluated"]
     total_pairs = stats["total_pairs"]
     progress = 100 * generated / total_pairs if total_pairs else 0
     evaluation_progress = 100 * evaluated / total_pairs if total_pairs else 0
-    return HTML_TEMPLATE.format(
+    return DIAGNOSTICS_TEMPLATE.format(
         generated_at=generated_at,
         generated=generated,
         evaluated=evaluated,
@@ -373,6 +373,7 @@ def write_site(output_dir: Path = DEFAULT_OUTPUT_DIR) -> Path:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     index_path = output_dir / "index.html"
+    diagnostics_path = output_dir / "diagnostics.html"
     pairs_dir = output_dir / "pairs"
     pairs_dir.mkdir(parents=True, exist_ok=True)
     written_files: set[str] = set()
@@ -381,8 +382,8 @@ def write_site(output_dir: Path = DEFAULT_OUTPUT_DIR) -> Path:
         recent = recent_arguments(conn, limit=50)
         tokens = token_usage_stats(conn)
         rows = [format_row(row) for row in recent]
-        html_text = render_html(stats, rows, tokens)
-        index_path.write_text(html_text, encoding="utf-8")
+        diagnostics_html = render_diagnostics_html(stats, rows, tokens)
+        diagnostics_path.write_text(diagnostics_html, encoding="utf-8")
 
         tokens_path = output_dir / "tokens.html"
         daily_rows = [render_daily_row(row) for row in tokens["daily"]]
@@ -392,6 +393,7 @@ def write_site(output_dir: Path = DEFAULT_OUTPUT_DIR) -> Path:
         heatmap_path = output_dir / "heatmap.html"
         heatmap_matrix = build_heatmap_matrix(conn)
         heatmap_html = render_heatmap_html(heatmap_matrix, stats)
+        index_path.write_text(heatmap_html, encoding="utf-8")
         heatmap_path.write_text(heatmap_html, encoding="utf-8")
 
         for row in pair_details(conn):
