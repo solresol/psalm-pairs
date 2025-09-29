@@ -63,11 +63,18 @@ def build_input(argument: str, psalm_x: int, psalm_y: int) -> str:
 
 def parse_tool_call(response_dict: Dict[str, Any]) -> Dict[str, Any]:
     for item in response_dict.get("output", []):
-        if item.get("type") != "tool_call":
+        item_type = item.get("type")
+        if item_type not in {"tool_call", "function_call"}:
             continue
-        tool_call = item.get("tool_call", {})
+
+        if item_type == "tool_call":
+            tool_call = item.get("tool_call", {})
+        else:  # function_call
+            tool_call = item
+
         if tool_call.get("name") != "submit_evaluation":
             continue
+
         arguments = tool_call.get("arguments")
         if isinstance(arguments, str):
             return json.loads(arguments)
