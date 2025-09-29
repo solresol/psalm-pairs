@@ -11,10 +11,10 @@ from typing import Iterable
 if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parent.parent))
     from psalm_pairs import PROJECT_ROOT
-    from psalm_pairs.db import connect, counts, recent_arguments
+    from psalm_pairs.db import connect, counts, recent_arguments, token_usage_stats
 else:
     from . import PROJECT_ROOT
-    from .db import connect, counts, recent_arguments
+    from .db import connect, counts, recent_arguments, token_usage_stats
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "site"
 
@@ -25,14 +25,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <meta charset=\"utf-8\">
   <title>Psalm Pair Arguments</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 2rem; background: #f8f9fa; color: #111; }
-    header { margin-bottom: 2rem; }
-    .stats { display: flex; flex-wrap: wrap; gap: 1rem; }
-    .card { background: white; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    table { width: 100%; border-collapse: collapse; margin-top: 2rem; }
-    th, td { padding: 0.5rem; border-bottom: 1px solid #ddd; text-align: left; }
-    th { background: #eef2f7; }
-    footer { margin-top: 3rem; font-size: 0.9rem; color: #555; }
+    body {{ font-family: system-ui, sans-serif; margin: 2rem; background: #f8f9fa; color: #111; }}
+    header {{ margin-bottom: 2rem; }}
+    .stats {{ display: flex; flex-wrap: wrap; gap: 1rem; }}
+    .card {{ background: white; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+    .card small {{ display: block; color: #666; margin-top: 0.35rem; font-size: 0.85rem; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 2rem; }}
+    th, td {{ padding: 0.5rem; border-bottom: 1px solid #ddd; text-align: left; }}
+    th {{ background: #eef2f7; }}
+    footer {{ margin-top: 3rem; font-size: 0.9rem; color: #555; }}
+    nav {{ margin-bottom: 1.5rem; }}
+    nav a {{ margin-right: 1rem; color: #0b7285; text-decoration: none; }}
+    nav a:hover {{ text-decoration: underline; }}
   </style>
 </head>
 <body>
@@ -40,6 +44,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <h1>Psalm Pair Arguments</h1>
   <p>Progress report generated on {generated_at} UTC.</p>
 </header>
+<nav>
+  <a href=\"index.html\">Overview</a>
+  <a href=\"tokens.html\">Token usage</a>
+</nav>
 <section class=\"stats\">
   <div class=\"card\">
     <strong>{generated}</strong><br>Pairs generated
@@ -56,6 +64,10 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <div class=\"card\">
     <strong>{evaluation_progress:.2f}%</strong><br>Evaluations complete
   </div>
+  <div class=\"card\">
+    <strong>{overall_tokens}</strong><br>Total tokens used
+    <small>Reasoning: {overall_reasoning}<br>Other: {overall_non_reasoning}</small>
+  </div>
 </section>
 <section>
   <h2>Most recent arguments</h2>
@@ -70,6 +82,79 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 </section>
 <footer>
   <p>This project explores narrative continuity within the Psalter by comparing every ordered pair of psalms.</p>
+</footer>
+</body>
+</html>
+"""
+
+
+TOKENS_TEMPLATE = """<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <title>Psalm Pair Token Usage</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 2rem; background: #f8f9fa; color: #111; }}
+    header {{ margin-bottom: 2rem; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 2rem; }}
+    th, td {{ padding: 0.6rem; border-bottom: 1px solid #ddd; text-align: right; }}
+    th {{ background: #eef2f7; text-align: right; }}
+    th:first-child, td:first-child {{ text-align: left; }}
+    nav a {{ margin-right: 1rem; color: #0b7285; text-decoration: none; }}
+    nav a:hover {{ text-decoration: underline; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }}
+    .card {{ background: white; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+    .card h3 {{ margin: 0 0 0.5rem; font-size: 1rem; color: #333; }}
+    .card strong {{ font-size: 1.5rem; display: block; }}
+    footer {{ margin-top: 3rem; font-size: 0.9rem; color: #555; }}
+  </style>
+</head>
+<body>
+<header>
+  <h1>Token usage</h1>
+  <p>Breakdown of model token consumption across argument generation and evaluation.</p>
+</header>
+<nav>
+  <a href=\"index.html\">Overview</a>
+  <a href=\"tokens.html\">Token usage</a>
+</nav>
+<section class=\"grid\">
+  <div class=\"card\">
+    <h3>Total tokens</h3>
+    <strong>{overall_total}</strong>
+    <p>Reasoning: {overall_reasoning}<br>Other: {overall_non_reasoning}</p>
+  </div>
+  <div class=\"card\">
+    <h3>Generation tokens</h3>
+    <strong>{generation_total}</strong>
+    <p>Reasoning: {generation_reasoning}<br>Other: {generation_non_reasoning}</p>
+  </div>
+  <div class=\"card\">
+    <h3>Evaluation tokens</h3>
+    <strong>{evaluation_total}</strong>
+    <p>Reasoning: {evaluation_reasoning}<br>Other: {evaluation_non_reasoning}</p>
+  </div>
+</section>
+<section>
+  <h2>Daily usage</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Date (UTC)</th>
+        <th>Total tokens</th>
+        <th>Reasoning tokens</th>
+        <th>Other tokens</th>
+        <th>Generation</th>
+        <th>Evaluation</th>
+      </tr>
+    </thead>
+    <tbody>
+      {daily_rows}
+    </tbody>
+  </table>
+</section>
+<footer>
+  <p>Token counts are pulled directly from the stored OpenAI responses.</p>
 </footer>
 </body>
 </html>
@@ -96,8 +181,8 @@ def format_row(row) -> str:
     )
 
 
-def render_html(stats: dict, rows: Iterable[str]) -> str:
-    generated_at = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+def render_html(stats: dict, rows: Iterable[str], tokens: dict) -> str:
+    generated_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     generated = stats["generated"]
     evaluated = stats["evaluated"]
     total_pairs = stats["total_pairs"]
@@ -110,6 +195,9 @@ def render_html(stats: dict, rows: Iterable[str]) -> str:
         total_pairs=total_pairs,
         progress=progress,
         evaluation_progress=evaluation_progress,
+        overall_tokens=tokens["overall_total"],
+        overall_reasoning=tokens["overall_reasoning"],
+        overall_non_reasoning=tokens["overall_non_reasoning"],
         rows="\n      ".join(rows),
     )
 
@@ -121,10 +209,43 @@ def write_site(output_dir: Path = DEFAULT_OUTPUT_DIR) -> Path:
     with connect() as conn:
         stats = counts(conn)
         recent = recent_arguments(conn, limit=50)
+        tokens = token_usage_stats(conn)
     rows = [format_row(row) for row in recent]
-    html_text = render_html(stats, rows)
+    html_text = render_html(stats, rows, tokens)
     index_path.write_text(html_text, encoding="utf-8")
+    tokens_path = output_dir / "tokens.html"
+    daily_rows = [render_daily_row(row) for row in tokens["daily"]]
+    tokens_html = render_tokens_html(tokens, daily_rows)
+    tokens_path.write_text(tokens_html, encoding="utf-8")
     return index_path
+
+
+def render_tokens_html(tokens: dict, daily_rows: Iterable[str]) -> str:
+    return TOKENS_TEMPLATE.format(
+        overall_total=tokens["overall_total"],
+        overall_reasoning=tokens["overall_reasoning"],
+        overall_non_reasoning=tokens["overall_non_reasoning"],
+        generation_total=tokens["generation_total"],
+        generation_reasoning=tokens["generation_reasoning"],
+        generation_non_reasoning=tokens["generation_non_reasoning"],
+        evaluation_total=tokens["evaluation_total"],
+        evaluation_reasoning=tokens["evaluation_reasoning"],
+        evaluation_non_reasoning=tokens["evaluation_non_reasoning"],
+        daily_rows="\n      ".join(daily_rows),
+    )
+
+
+def render_daily_row(row: dict) -> str:
+    return (
+        "<tr>"
+        f"<td>{row['day']}</td>"
+        f"<td>{row['total']}</td>"
+        f"<td>{row['reasoning_total']}</td>"
+        f"<td>{row['non_reasoning_total']}</td>"
+        f"<td>{row['generation_total']}</td>"
+        f"<td>{row['evaluation_total']}</td>"
+        "</tr>"
+    )
 
 
 def parse_args() -> argparse.Namespace:

@@ -11,12 +11,12 @@ if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parent.parent))
     from psalm_pairs import DB_PATH
     from psalm_pairs.db import connect, insert_pair_argument, pending_pairs
-    from psalm_pairs.openai_client import build_client, response_to_dict
+    from psalm_pairs.openai_client import build_client, extract_usage_tokens, response_to_dict
     from psalm_pairs.psalms import format_psalm
 else:
     from . import DB_PATH
     from .db import connect, insert_pair_argument, pending_pairs
-    from .openai_client import build_client, response_to_dict
+    from .openai_client import build_client, extract_usage_tokens, response_to_dict
     from .psalms import format_psalm
 
 DEFAULT_LIMIT = 50
@@ -59,14 +59,19 @@ def run(limit: int, model: str = DEFAULT_MODEL) -> int:
         client = build_client()
         for psalm_x, psalm_y in todo:
             prompt, response = generate_pair(client, psalm_x, psalm_y, model)
+            response_dict = response_to_dict(response)
+            usage = extract_usage_tokens(response_dict)
             insert_pair_argument(
                 conn,
                 psalm_x=psalm_x,
                 psalm_y=psalm_y,
                 prompt=prompt,
                 response_text=getattr(response, "output_text", ""),
-                response_json=response_to_dict(response),
+                response_json=response_dict,
                 model=model,
+                total_tokens=usage["total_tokens"],
+                reasoning_tokens=usage["reasoning_tokens"],
+                non_reasoning_tokens=usage["non_reasoning_tokens"],
             )
             created += 1
         return created
