@@ -29,14 +29,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     header {{ margin-bottom: 2rem; }}
     .stats {{ display: flex; flex-wrap: wrap; gap: 1rem; }}
     .card {{ background: white; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+
     .card small {{ display: block; color: #666; margin-top: 0.35rem; font-size: 0.85rem; }}
+
     table {{ width: 100%; border-collapse: collapse; margin-top: 2rem; }}
     th, td {{ padding: 0.5rem; border-bottom: 1px solid #ddd; text-align: left; }}
     th {{ background: #eef2f7; }}
     footer {{ margin-top: 3rem; font-size: 0.9rem; color: #555; }}
+
     nav {{ margin-bottom: 1.5rem; }}
     nav a {{ margin-right: 1rem; color: #0b7285; text-decoration: none; }}
     nav a:hover {{ text-decoration: underline; }}
+
   </style>
 </head>
 <body>
@@ -181,8 +185,9 @@ def format_row(row) -> str:
     )
 
 
-def render_html(stats: dict, rows: Iterable[str], tokens: dict) -> str:
-    generated_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+def render_html(stats: dict, rows: Iterable[str]) -> str:
+    generated_at = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S")
     generated = stats["generated"]
     evaluated = stats["evaluated"]
     total_pairs = stats["total_pairs"]
