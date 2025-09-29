@@ -349,3 +349,42 @@ def token_usage_stats(conn: sqlite3.Connection) -> dict:
         "overall_non_reasoning": overall_non_reasoning,
         "daily": daily,
     }
+
+
+def pair_details(conn: sqlite3.Connection) -> Iterator[sqlite3.Row]:
+    """Yield complete information for each generated Psalm pair.
+
+    The returned rows contain both generation and evaluation metadata where
+    available so that site builders can create detailed pages without issuing
+    additional queries per pair.
+    """
+
+    query = """
+        SELECT
+            pa.id AS pair_id,
+            pa.psalm_x,
+            pa.psalm_y,
+            pa.prompt,
+            pa.response_text,
+            pa.response_json,
+            pa.model AS generation_model,
+            pa.total_tokens AS generation_total_tokens,
+            pa.reasoning_tokens AS generation_reasoning_tokens,
+            pa.non_reasoning_tokens AS generation_non_reasoning_tokens,
+            pa.created_at AS generated_at,
+            pe.id AS evaluation_id,
+            pe.score,
+            pe.justification,
+            pe.evaluator_model,
+            pe.evaluation_json,
+            pe.total_tokens AS evaluation_total_tokens,
+            pe.reasoning_tokens AS evaluation_reasoning_tokens,
+            pe.non_reasoning_tokens AS evaluation_non_reasoning_tokens,
+            pe.created_at AS evaluated_at
+        FROM pair_arguments pa
+        LEFT JOIN pair_evaluations pe ON pe.pair_id = pa.id
+        ORDER BY pa.psalm_x, pa.psalm_y
+    """
+
+    cur = conn.execute(query)
+    yield from cur
