@@ -73,6 +73,10 @@ def parse_tool_call(response_dict: Dict[str, Any]) -> Dict[str, Any]:
             return json.loads(arguments)
         if isinstance(arguments, dict):
             return arguments
+    logger.error(
+        "submit_evaluation tool call missing. Response output: %s",
+        json.dumps(response_dict.get("output", []), indent=2, sort_keys=True),
+    )
     raise RuntimeError("No submit_evaluation tool call found in response")
 
 
@@ -89,6 +93,11 @@ def evaluate_pair(client, row, model: str):
         tool_choice={"type": "function", "name": "submit_evaluation"},
     )
     response_dict = response_to_dict(response)
+    logger.debug(
+        "Raw response dictionary for argument %s: %s",
+        row["id"],
+        json.dumps(response_dict, indent=2, sort_keys=True),
+    )
     usage = extract_usage_tokens(response_dict)
     tool_payload = parse_tool_call(response_dict)
     score = float(tool_payload["score"])
