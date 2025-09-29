@@ -25,25 +25,23 @@ EVALUATOR_MODEL = os.environ.get("PSALM_PAIRS_EVAL_MODEL", "gpt-5")
 TOOLS = [
     {
         "type": "function",
-        "function": {
-            "name": "submit_evaluation",
-            "description": "Record a numeric quality score (0-10) for the provided Psalm pair argument along with an explanation.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "score": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 10,
-                        "description": "Numeric score between 0 (very weak) and 10 (very strong).",
-                    },
-                    "justification": {
-                        "type": "string",
-                        "description": "Short explanation for the chosen score.",
-                    },
+        "name": "submit_evaluation",
+        "description": "Record a numeric quality score (0-10) for the provided Psalm pair argument along with an explanation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "score": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "description": "Numeric score between 0 (very weak) and 10 (very strong).",
                 },
-                "required": ["score", "justification"],
+                "justification": {
+                    "type": "string",
+                    "description": "Short explanation for the chosen score.",
+                },
             },
+            "required": ["score", "justification"],
         },
     }
 ]
@@ -88,7 +86,7 @@ def evaluate_pair(client, row, model: str):
         input=build_input(argument, psalm_x, psalm_y),
         reasoning={"effort": "medium"},
         tools=TOOLS,
-        tool_choice={"type": "function", "function": {"name": "submit_evaluation"}},
+        tool_choice={"type": "function", "name": "submit_evaluation"},
     )
     response_dict = response_to_dict(response)
     tool_payload = parse_tool_call(response_dict)
