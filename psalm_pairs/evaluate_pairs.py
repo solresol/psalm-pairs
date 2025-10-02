@@ -38,12 +38,6 @@ TOOLS = [
                         "type": "string",
                         "description": "≤35 words. State the decisive evidence and any applied cap (e.g., 'No verse refs → max 3').",
                     },
-                    "score": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 10,
-                        "description": "Numeric score between 0 and 10 (use the full scale).",
-                    },
                     "checks": {
                         "type": "object",
                         "properties": {
@@ -81,8 +75,14 @@ TOOLS = [
                             ],
                         },
                     },
+                    "score": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 10,
+                        "description": "Numeric score between 0 and 10 (use the full scale).",
+                    },
                 },
-                "required": ["justification", "score", "checks", "vocabulary_specificity"],
+                "required": ["justification", "checks", "vocabulary_specificity", "score"],
             },
         },
     }
@@ -181,15 +181,16 @@ def parse_tool_call(response_dict: Dict[str, Any]) -> Dict[str, Any]:
             continue
 
         if ordered_keys:
-            if ordered_keys[0] != "justification":
+            expected_order = ["justification", "checks", "vocabulary_specificity"]
+            if "flags" in payload:
+                expected_order.append("flags")
+            expected_order.append("score")
+
+            if ordered_keys != expected_order:
                 logger.warning(
-                    "submit_evaluation arguments should list justification first; got %s",
-                    ordered_keys[0],
-                )
-            if ordered_keys[-1] != "score":
-                logger.warning(
-                    "submit_evaluation arguments should list score last; got %s",
-                    ordered_keys[-1],
+                    "submit_evaluation arguments should follow %s order; got %s",
+                    ", ".join(expected_order),
+                    ", ".join(ordered_keys),
                 )
 
         missing = {"score", "justification", "checks", "vocabulary_specificity"} - payload.keys()
