@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -32,10 +33,18 @@ CREATE TABLE IF NOT EXISTS pair_evaluations (
     score REAL NOT NULL,
     justification TEXT NOT NULL,
     evaluator_model TEXT NOT NULL,
+    evaluator_version INTEGER NOT NULL DEFAULT 1,
     evaluation_json TEXT NOT NULL,
     total_tokens INTEGER,
     reasoning_tokens INTEGER,
     non_reasoning_tokens INTEGER,
+    has_verse_refs INTEGER,
+    any_factual_error_detected INTEGER,
+    only_generic_motifs INTEGER,
+    counterargument_considered INTEGER,
+    lxx_mt_numbering_acknowledged INTEGER,
+    vocabulary_specificity REAL,
+    flags TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY(pair_id) REFERENCES pair_arguments(id) ON DELETE CASCADE,
     UNIQUE (pair_id)
@@ -51,6 +60,17 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "pair_evaluations", "total_tokens", "INTEGER")
     ensure_column(conn, "pair_evaluations", "reasoning_tokens", "INTEGER")
     ensure_column(conn, "pair_evaluations", "non_reasoning_tokens", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "evaluator_version", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "has_verse_refs", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "any_factual_error_detected", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "only_generic_motifs", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "counterargument_considered", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "lxx_mt_numbering_acknowledged", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "vocabulary_specificity", "REAL")
+    ensure_column(conn, "pair_evaluations", "flags", "TEXT")
+    conn.execute(
+        "UPDATE pair_evaluations SET evaluator_version = 1 WHERE evaluator_version IS NULL"
+    )
     conn.commit()
 
 
@@ -182,27 +202,50 @@ def insert_evaluation(
     score: float,
     justification: str,
     evaluator_model: str,
+    evaluator_version: int,
     evaluation_json: dict,
+    checks: dict[str, bool],
+    flags: list[str] | None = None,
+    vocabulary_specificity: float | None = None,
     total_tokens: Optional[int] = None,
     reasoning_tokens: Optional[int] = None,
     non_reasoning_tokens: Optional[int] = None,
 ) -> int:
+    flags = flags or []
+    checks = checks or {}
+    has_verse_refs = 1 if checks.get("has_verse_refs") else 0
+    any_factual_error_detected = 1 if checks.get("any_factual_error_detected") else 0
+    only_generic_motifs = 1 if checks.get("only_generic_motifs") else 0
+    counterargument_considered = 1 if checks.get("counterargument_considered") else 0
+    lxx_mt_numbering_acknowledged = 1 if checks.get("lxx_mt_numbering_acknowledged") else 0
+
     cur = conn.execute(
         """
         INSERT OR REPLACE INTO pair_evaluations
-            (pair_id, score, justification, evaluator_model, evaluation_json,
-             total_tokens, reasoning_tokens, non_reasoning_tokens, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (pair_id, score, justification, evaluator_model, evaluator_version,
+             evaluation_json, total_tokens, reasoning_tokens, non_reasoning_tokens,
+             has_verse_refs, any_factual_error_detected, only_generic_motifs,
+             counterargument_considered, lxx_mt_numbering_acknowledged, vocabulary_specificity,
+             flags, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             pair_id,
             score,
             justification,
             evaluator_model,
+            evaluator_version,
             json.dumps(evaluation_json, ensure_ascii=False),
             total_tokens,
             reasoning_tokens,
             non_reasoning_tokens,
+            has_verse_refs,
+            any_factual_error_detected,
+            only_generic_motifs,
+            counterargument_considered,
+            lxx_mt_numbering_acknowledged,
+            vocabulary_specificity,
+            json.dumps(flags, ensure_ascii=False),
             datetime.utcnow().isoformat(timespec="seconds"),
         ),
     )
@@ -223,7 +266,7 @@ def recent_arguments(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.
     cur = conn.execute(
         """
         SELECT pa.id, pa.psalm_x, pa.psalm_y, pa.response_text, pa.created_at,
-               pe.score, pe.justification, pe.created_at AS evaluated_at
+               pe.score, pe.justification, pe.evaluator_version, pe.created_at AS evaluated_at
         FROM pair_arguments pa
         LEFT JOIN pair_evaluations pe ON pe.pair_id = pa.id
         ORDER BY pa.id DESC
@@ -351,6 +394,19 @@ def token_usage_stats(conn: sqlite3.Connection) -> dict:
     }
 
 
+def evaluation_scores_by_version(conn: sqlite3.Connection) -> dict[int, list[float]]:
+    """Return recorded evaluation scores keyed by evaluator version."""
+
+    rows = conn.execute(
+        "SELECT COALESCE(evaluator_version, 1) AS version, score FROM pair_evaluations WHERE score IS NOT NULL"
+    )
+    buckets: defaultdict[int, list[float]] = defaultdict(list)
+    for row in rows:
+        version = int(row["version"])
+        buckets[version].append(float(row["score"]))
+    return {version: scores for version, scores in buckets.items()}
+
+
 def pair_details(conn: sqlite3.Connection) -> Iterator[sqlite3.Row]:
     """Yield complete information for each generated Psalm pair.
 
@@ -376,10 +432,18 @@ def pair_details(conn: sqlite3.Connection) -> Iterator[sqlite3.Row]:
             pe.score,
             pe.justification,
             pe.evaluator_model,
+            pe.evaluator_version,
             pe.evaluation_json,
             pe.total_tokens AS evaluation_total_tokens,
             pe.reasoning_tokens AS evaluation_reasoning_tokens,
             pe.non_reasoning_tokens AS evaluation_non_reasoning_tokens,
+            pe.has_verse_refs,
+            pe.any_factual_error_detected,
+            pe.only_generic_motifs,
+            pe.counterargument_considered,
+            pe.lxx_mt_numbering_acknowledged,
+            pe.vocabulary_specificity,
+            pe.flags,
             pe.created_at AS evaluated_at
         FROM pair_arguments pa
         LEFT JOIN pair_evaluations pe ON pe.pair_id = pa.id
