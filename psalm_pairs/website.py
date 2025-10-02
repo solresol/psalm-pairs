@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import datetime as dt
 import html
+import math
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -11,10 +13,24 @@ from typing import Iterable
 if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parent.parent))
     from psalm_pairs import PROJECT_ROOT
-    from psalm_pairs.db import connect, counts, pair_details, recent_arguments, token_usage_stats
+    from psalm_pairs.db import (
+        connect,
+        counts,
+        evaluation_scores_by_version,
+        pair_details,
+        recent_arguments,
+        token_usage_stats,
+    )
 else:
     from . import PROJECT_ROOT
-    from .db import connect, counts, pair_details, recent_arguments, token_usage_stats
+    from .db import (
+        connect,
+        counts,
+        evaluation_scores_by_version,
+        pair_details,
+        recent_arguments,
+        token_usage_stats,
+    )
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "site"
 
@@ -31,6 +47,17 @@ DIAGNOSTICS_TEMPLATE = """<!DOCTYPE html>
     .card {{ background: white; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
 
     .card small {{ display: block; color: #666; margin-top: 0.35rem; font-size: 0.85rem; }}
+
+    .histograms {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; margin-top: 1.5rem; }}
+    .histogram-card {{ background: white; border-radius: 8px; padding: 1rem 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }}
+    .histogram-card h3 {{ margin: 0; font-size: 1.1rem; color: #212529; }}
+    .histogram-card p.meta {{ margin: 0.5rem 0 1rem; color: #495057; font-size: 0.9rem; }}
+    .histogram-bars {{ list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.45rem; }}
+    .histogram-bars li {{ display: grid; grid-template-columns: 1.8rem 1fr 2.8rem; align-items: center; gap: 0.6rem; font-size: 0.9rem; color: #495057; }}
+    .histogram-bars .bucket {{ font-variant-numeric: tabular-nums; color: #343a40; }}
+    .histogram-bars .bar-container {{ background: #e9ecef; border-radius: 4px; height: 12px; overflow: hidden; position: relative; }}
+    .histogram-bars .bar {{ background: linear-gradient(90deg, #4263eb, #748ffc); height: 100%; display: block; border-radius: 4px; }}
+    .histogram-bars .count {{ text-align: right; font-variant-numeric: tabular-nums; }}
 
     table {{ width: 100%; border-collapse: collapse; margin-top: 2rem; }}
     th, td {{ padding: 0.5rem; border-bottom: 1px solid #ddd; text-align: left; }}
@@ -73,6 +100,10 @@ DIAGNOSTICS_TEMPLATE = """<!DOCTYPE html>
     <strong>{overall_tokens}</strong><br>Total tokens used
     <small>Reasoning: {overall_reasoning}<br>Other: {overall_non_reasoning}</small>
   </div>
+</section>
+<section>
+  <h2>Evaluation score distribution</h2>
+  {histograms}
 </section>
 <section>
   <h2>Most recent arguments</h2>
@@ -261,6 +292,8 @@ PAIR_TEMPLATE = """<!DOCTYPE html>
     .meta strong {{ display: block; font-size: 0.85rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.35rem; }}
     .tokens {{ margin: 0.75rem 0; font-size: 0.95rem; color: #333; }}
     .tokens span {{ display: inline-block; margin-right: 1rem; }}
+    .checks {{ list-style: none; padding-left: 0; margin: 0.75rem 0; display: grid; gap: 0.4rem; }}
+    .checks li {{ background: #f8f9fb; border: 1px solid #dee2e6; border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.95rem; color: #333; }}
     footer {{ text-align: center; color: #555; font-size: 0.9rem; margin-top: 2rem; }}
   </style>
 </head>
@@ -332,9 +365,11 @@ def format_row(row) -> str:
     if row["response_text"]:
         first_line = row["response_text"].strip().splitlines()[0]
         excerpt = html.escape(first_line[:160])
-    evaluation = (
-        f"Score {row['score']} on {row['evaluated_at']}" if row["score"] is not None else "Pending"
-    )
+    if row["score"] is not None:
+        version_suffix = f" (v{row['evaluator_version']})" if row["evaluator_version"] is not None else ""
+        evaluation = f"Score {row['score']}{version_suffix} on {row['evaluated_at']}"
+    else:
+        evaluation = "Pending"
     pair_link = (
         f'<a href="{pair_url(row["psalm_x"], row["psalm_y"])}">{row["psalm_x"]} → {row["psalm_y"]}</a>'
     )
@@ -348,7 +383,7 @@ def format_row(row) -> str:
 
 
 
-def render_diagnostics_html(stats: dict, rows: Iterable[str], tokens: dict) -> str:
+def render_diagnostics_html(stats: dict, rows: Iterable[str], tokens: dict, histogram_html: str) -> str:
     generated_at = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S")
     generated = stats["generated"]
     evaluated = stats["evaluated"]
@@ -365,6 +400,7 @@ def render_diagnostics_html(stats: dict, rows: Iterable[str], tokens: dict) -> s
         overall_tokens=tokens["overall_total"],
         overall_reasoning=tokens["overall_reasoning"],
         overall_non_reasoning=tokens["overall_non_reasoning"],
+        histograms=histogram_html,
         rows="\n      ".join(rows),
     )
 
@@ -382,7 +418,9 @@ def write_site(output_dir: Path = DEFAULT_OUTPUT_DIR) -> Path:
         recent = recent_arguments(conn, limit=50)
         tokens = token_usage_stats(conn)
         rows = [format_row(row) for row in recent]
-        diagnostics_html = render_diagnostics_html(stats, rows, tokens)
+        scores_by_version = evaluation_scores_by_version(conn)
+        histogram_html = render_histogram_section(scores_by_version)
+        diagnostics_html = render_diagnostics_html(stats, rows, tokens, histogram_html)
         diagnostics_path.write_text(diagnostics_html, encoding="utf-8")
 
         tokens_path = output_dir / "tokens.html"
@@ -438,7 +476,56 @@ def render_pair_page(row) -> str:
             evaluation_details.append(
                 f"<p>Evaluator model: {html.escape(row['evaluator_model'])}</p>"
             )
+        if row["evaluator_version"]:
+            evaluation_details.append(
+                f"<p>Evaluator version: v{row['evaluator_version']}</p>"
+            )
         evaluation_details.append(evaluation_tokens)
+        checklist_pairs = [
+            ("Has verse refs", row["has_verse_refs"]),
+            ("Factual error detected", row["any_factual_error_detected"]),
+            ("Only generic motifs", row["only_generic_motifs"]),
+            ("Counterargument considered", row["counterargument_considered"]),
+            (
+                "LXX/MT numbering acknowledged",
+                row["lxx_mt_numbering_acknowledged"],
+            ),
+        ]
+        if any(value is not None for _, value in checklist_pairs):
+            items = []
+            for label, value in checklist_pairs:
+                if value is None:
+                    status = "—"
+                else:
+                    try:
+                        status_bool = bool(int(value))
+                    except (TypeError, ValueError):
+                        status = html.escape(str(value))
+                    else:
+                        status = "Yes" if status_bool else "No"
+                items.append(f"<li><strong>{label}:</strong> {status}</li>")
+            evaluation_details.append(
+                "<div><h4>Checklist</h4><ul class=\"checks\">"
+                + "".join(items)
+                + "</ul></div>"
+            )
+        vocabulary_specificity = row["vocabulary_specificity"]
+        if vocabulary_specificity is not None:
+            evaluation_details.append(
+                f"<p>Vocabulary specificity: {float(vocabulary_specificity):.1f} / 10</p>"
+            )
+        flags: list[str] = []
+        raw_flags = row["flags"]
+        if raw_flags:
+            try:
+                parsed_flags = json.loads(raw_flags)
+                if isinstance(parsed_flags, list):
+                    flags = [str(flag) for flag in parsed_flags]
+            except json.JSONDecodeError:
+                flags = [f"Unparseable flags: {raw_flags}"]
+        if flags:
+            flag_items = ", ".join(html.escape(flag) for flag in flags)
+            evaluation_details.append(f"<p>Flags: {flag_items}</p>")
         evaluation_details.append(
             f"<pre>{html.escape(row['justification'] or '')}</pre>"
         )
@@ -497,6 +584,55 @@ def render_daily_row(row: dict) -> str:
         f"<td>{row['evaluation_total']}</td>"
         "</tr>"
     )
+
+
+def _score_to_bucket(score: float) -> int:
+    bucket = int(math.floor(score + 0.5))
+    return max(0, min(10, bucket))
+
+
+def render_histogram_section(scores_by_version: dict[int, list[float]]) -> str:
+    if not scores_by_version:
+        return "<p>No evaluations recorded yet.</p>"
+
+    cards: list[str] = []
+    for version in sorted(scores_by_version):
+        scores = scores_by_version[version]
+        counts = [0] * 11
+        for score in scores:
+            counts[_score_to_bucket(score)] += 1
+
+        total = len(scores)
+        avg = sum(scores) / total if total else 0.0
+        max_count = max(counts) if any(counts) else 1
+        rows: list[str] = []
+        for bucket, count in enumerate(counts):
+            width = (count / max_count) * 100 if max_count else 0
+            bar_inner = f'<span class="bar" style="width: {width:.1f}%"></span>' if count else ""
+            rows.append(
+                "<li>"
+                f"<span class=\"bucket\">{bucket}</span>"
+                "<div class=\"bar-container\">"
+                f"{bar_inner}"
+                "</div>"
+                f"<span class=\"count\">{count}</span>"
+                "</li>"
+            )
+
+        meta_text = (
+            f"<p class=\"meta\">Total: {total} · Avg: {avg:.2f}</p>" if total else "<p class=\"meta\">No evaluations recorded.</p>"
+        )
+        card = (
+            "<div class=\"histogram-card\">"
+            f"<h3>Evaluator v{version}</h3>"
+            f"{meta_text}"
+            "<ul class=\"histogram-bars\">"
+            + "".join(rows)
+            + "</ul></div>"
+        )
+        cards.append(card)
+
+    return "<div class=\"histograms\">" + "".join(cards) + "</div>"
 
 
 def _score_to_color(score: float) -> str:
