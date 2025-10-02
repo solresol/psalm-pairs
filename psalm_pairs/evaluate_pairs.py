@@ -5,11 +5,19 @@ import argparse
 import json
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Any, Dict
 
-from . import DB_PATH
-from .db import connect, insert_evaluation, pending_evaluations
-from .openai_client import build_client, response_to_dict
+if __package__ in {None, ""}:
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+    from psalm_pairs import DB_PATH
+    from psalm_pairs.db import connect, insert_evaluation, pending_evaluations
+    from psalm_pairs.openai_client import build_client, extract_usage_tokens, response_to_dict
+else:
+    from . import DB_PATH
+    from .db import connect, insert_evaluation, pending_evaluations
+    from .openai_client import build_client, extract_usage_tokens, response_to_dict
 
 DEFAULT_LIMIT = 50
 EVALUATOR_MODEL = os.environ.get("PSALM_PAIRS_EVAL_MODEL", "gpt-5")
@@ -17,25 +25,23 @@ EVALUATOR_MODEL = os.environ.get("PSALM_PAIRS_EVAL_MODEL", "gpt-5")
 TOOLS = [
     {
         "type": "function",
-        "function": {
-            "name": "submit_evaluation",
-            "description": "Record a numeric quality score (0-10) for the provided Psalm pair argument along with an explanation.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "justification": {
-                        "type": "string",
-                        "description": "Short explanation for the chosen score.",
-                    },
-                    "score": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 10,
-                        "description": "Numeric score between 0 (very weak) and 10 (very strong).",
-                    },
+        "name": "submit_evaluation",
+        "description": "Record a numeric quality score (0-10) for the provided Psalm pair argument along with an explanation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "justification": {
+                    "type": "string",
+                    "description": "Short explanation for the chosen score.",
                 },
-                "required": ["score", "justification"],
+                "score": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "description": "Numeric score between 0 (very weak) and 10 (very strong).",
+                },
             },
+            "required": ["score", "justification"],
         },
     }
 ]
@@ -57,16 +63,27 @@ def build_input(argument: str, psalm_x: int, psalm_y: int) -> str:
 
 def parse_tool_call(response_dict: Dict[str, Any]) -> Dict[str, Any]:
     for item in response_dict.get("output", []):
-        if item.get("type") != "tool_call":
+        item_type = item.get("type")
+        if item_type not in {"tool_call", "function_call"}:
             continue
-        tool_call = item.get("tool_call", {})
+
+        if item_type == "tool_call":
+            tool_call = item.get("tool_call", {})
+        else:  # function_call
+            tool_call = item
+
         if tool_call.get("name") != "submit_evaluation":
             continue
+
         arguments = tool_call.get("arguments")
         if isinstance(arguments, str):
             return json.loads(arguments)
         if isinstance(arguments, dict):
             return arguments
+    logger.error(
+        "submit_evaluation tool call missing. Response output: %s",
+        json.dumps(response_dict.get("output", []), indent=2, sort_keys=True),
+    )
     raise RuntimeError("No submit_evaluation tool call found in response")
 
 
@@ -80,13 +97,19 @@ def evaluate_pair(client, row, model: str):
         input=build_input(argument, psalm_x, psalm_y),
         reasoning={"effort": "medium"},
         tools=TOOLS,
-        tool_choice={"type": "function", "function": {"name": "submit_evaluation"}},
+        tool_choice={"type": "function", "name": "submit_evaluation"},
     )
     response_dict = response_to_dict(response)
+    logger.debug(
+        "Raw response dictionary for argument %s: %s",
+        row["id"],
+        json.dumps(response_dict, indent=2, sort_keys=True),
+    )
+    usage = extract_usage_tokens(response_dict)
     tool_payload = parse_tool_call(response_dict)
     score = float(tool_payload["score"])
     justification = str(tool_payload["justification"])
-    return response, score, justification
+    return response_dict, usage, score, justification
 
 
 def run(limit: int, model: str = EVALUATOR_MODEL) -> int:
@@ -98,14 +121,17 @@ def run(limit: int, model: str = EVALUATOR_MODEL) -> int:
         completed = 0
         client = build_client()
         for row in rows:
-            response, score, justification = evaluate_pair(client, row, model)
+            response_dict, usage, score, justification = evaluate_pair(client, row, model)
             insert_evaluation(
                 conn,
                 pair_id=row["id"],
                 score=score,
                 justification=justification,
                 evaluator_model=model,
-                evaluation_json=response_to_dict(response),
+                evaluation_json=response_dict,
+                total_tokens=usage["total_tokens"],
+                reasoning_tokens=usage["reasoning_tokens"],
+                non_reasoning_tokens=usage["non_reasoning_tokens"],
             )
             completed += 1
         return completed

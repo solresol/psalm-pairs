@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS pair_arguments (
     response_text TEXT NOT NULL,
     response_json TEXT NOT NULL,
     model TEXT NOT NULL,
+    total_tokens INTEGER,
+    reasoning_tokens INTEGER,
+    non_reasoning_tokens INTEGER,
     created_at TEXT NOT NULL,
     UNIQUE (psalm_x, psalm_y)
 );
@@ -30,6 +33,9 @@ CREATE TABLE IF NOT EXISTS pair_evaluations (
     justification TEXT NOT NULL,
     evaluator_model TEXT NOT NULL,
     evaluation_json TEXT NOT NULL,
+    total_tokens INTEGER,
+    reasoning_tokens INTEGER,
+    non_reasoning_tokens INTEGER,
     created_at TEXT NOT NULL,
     FOREIGN KEY(pair_id) REFERENCES pair_arguments(id) ON DELETE CASCADE,
     UNIQUE (pair_id)
@@ -39,7 +45,20 @@ CREATE TABLE IF NOT EXISTS pair_evaluations (
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    ensure_column(conn, "pair_arguments", "total_tokens", "INTEGER")
+    ensure_column(conn, "pair_arguments", "reasoning_tokens", "INTEGER")
+    ensure_column(conn, "pair_arguments", "non_reasoning_tokens", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "total_tokens", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "reasoning_tokens", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "non_reasoning_tokens", "INTEGER")
     conn.commit()
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    cur = conn.execute(f"PRAGMA table_info({table})")
+    if any(row[1] == column for row in cur):
+        return
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -74,12 +93,16 @@ def insert_pair_argument(
     response_text: str,
     response_json: dict,
     model: str,
+    total_tokens: Optional[int] = None,
+    reasoning_tokens: Optional[int] = None,
+    non_reasoning_tokens: Optional[int] = None,
 ) -> int:
     cur = conn.execute(
         """
         INSERT OR IGNORE INTO pair_arguments
-            (psalm_x, psalm_y, prompt, response_text, response_json, model, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (psalm_x, psalm_y, prompt, response_text, response_json, model,
+             total_tokens, reasoning_tokens, non_reasoning_tokens, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             psalm_x,
@@ -88,6 +111,9 @@ def insert_pair_argument(
             response_text,
             json.dumps(response_json, ensure_ascii=False),
             model,
+            total_tokens,
+            reasoning_tokens,
+            non_reasoning_tokens,
             datetime.utcnow().isoformat(timespec="seconds"),
         ),
     )
@@ -102,6 +128,19 @@ def insert_pair_argument(
     row = cur.fetchone()
     if row is None:
         raise RuntimeError("Failed to persist pair argument and could not recover existing ID")
+    if any(value is not None for value in (total_tokens, reasoning_tokens, non_reasoning_tokens)):
+        conn.execute(
+            """
+            UPDATE pair_arguments
+            SET
+                total_tokens = COALESCE(?, total_tokens),
+                reasoning_tokens = COALESCE(?, reasoning_tokens),
+                non_reasoning_tokens = COALESCE(?, non_reasoning_tokens)
+            WHERE psalm_x = ? AND psalm_y = ?
+            """,
+            (total_tokens, reasoning_tokens, non_reasoning_tokens, psalm_x, psalm_y),
+        )
+        conn.commit()
     return int(row[0])
 
 
@@ -144,12 +183,16 @@ def insert_evaluation(
     justification: str,
     evaluator_model: str,
     evaluation_json: dict,
+    total_tokens: Optional[int] = None,
+    reasoning_tokens: Optional[int] = None,
+    non_reasoning_tokens: Optional[int] = None,
 ) -> int:
     cur = conn.execute(
         """
         INSERT OR REPLACE INTO pair_evaluations
-            (pair_id, score, justification, evaluator_model, evaluation_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+            (pair_id, score, justification, evaluator_model, evaluation_json,
+             total_tokens, reasoning_tokens, non_reasoning_tokens, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             pair_id,
@@ -157,6 +200,9 @@ def insert_evaluation(
             justification,
             evaluator_model,
             json.dumps(evaluation_json, ensure_ascii=False),
+            total_tokens,
+            reasoning_tokens,
+            non_reasoning_tokens,
             datetime.utcnow().isoformat(timespec="seconds"),
         ),
     )
@@ -186,3 +232,159 @@ def recent_arguments(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.
         (limit,),
     )
     return list(cur)
+
+
+def _aggregate_token_columns(conn: sqlite3.Connection, table: str) -> tuple[int, int, int]:
+    query = f"""
+        SELECT
+            COALESCE(SUM(total_tokens), 0) AS total,
+            COALESCE(SUM(reasoning_tokens), 0) AS reasoning,
+            COALESCE(SUM(
+                CASE
+                    WHEN non_reasoning_tokens IS NOT NULL THEN non_reasoning_tokens
+                    WHEN total_tokens IS NOT NULL THEN total_tokens - COALESCE(reasoning_tokens, 0)
+                    ELSE 0
+                END
+            ), 0) AS non_reasoning
+        FROM {table}
+    """
+    row = conn.execute(query).fetchone()
+    total = int(row[0] or 0)
+    reasoning = int(row[1] or 0)
+    non_reasoning = int(row[2] or 0)
+    return total, reasoning, non_reasoning
+
+
+def token_usage_stats(conn: sqlite3.Connection) -> dict:
+    generation_total, generation_reasoning, generation_non_reasoning = _aggregate_token_columns(
+        conn, "pair_arguments"
+    )
+    evaluation_total, evaluation_reasoning, evaluation_non_reasoning = _aggregate_token_columns(
+        conn, "pair_evaluations"
+    )
+
+    overall_total = generation_total + evaluation_total
+    overall_reasoning = generation_reasoning + evaluation_reasoning
+    overall_non_reasoning = generation_non_reasoning + evaluation_non_reasoning
+
+    daily_rows = conn.execute(
+        """
+        SELECT
+            day,
+            SUM(generation_total) AS generation_total,
+            SUM(evaluation_total) AS evaluation_total,
+            SUM(generation_reasoning) AS generation_reasoning,
+            SUM(evaluation_reasoning) AS evaluation_reasoning,
+            SUM(generation_non_reasoning) AS generation_non_reasoning,
+            SUM(evaluation_non_reasoning) AS evaluation_non_reasoning
+        FROM (
+            SELECT
+                DATE(created_at) AS day,
+                COALESCE(total_tokens, 0) AS generation_total,
+                0 AS evaluation_total,
+                COALESCE(reasoning_tokens, 0) AS generation_reasoning,
+                0 AS evaluation_reasoning,
+                COALESCE(
+                    CASE
+                        WHEN non_reasoning_tokens IS NOT NULL THEN non_reasoning_tokens
+                        WHEN total_tokens IS NOT NULL THEN total_tokens - COALESCE(reasoning_tokens, 0)
+                        ELSE 0
+                    END,
+                    0
+                ) AS generation_non_reasoning,
+                0 AS evaluation_non_reasoning
+            FROM pair_arguments
+            UNION ALL
+            SELECT
+                DATE(created_at) AS day,
+                0 AS generation_total,
+                COALESCE(total_tokens, 0) AS evaluation_total,
+                0 AS generation_reasoning,
+                COALESCE(reasoning_tokens, 0) AS evaluation_reasoning,
+                0 AS generation_non_reasoning,
+                COALESCE(
+                    CASE
+                        WHEN non_reasoning_tokens IS NOT NULL THEN non_reasoning_tokens
+                        WHEN total_tokens IS NOT NULL THEN total_tokens - COALESCE(reasoning_tokens, 0)
+                        ELSE 0
+                    END,
+                    0
+                ) AS evaluation_non_reasoning
+            FROM pair_evaluations
+        )
+        GROUP BY day
+        ORDER BY day ASC
+        """
+    ).fetchall()
+
+    daily = []
+    for row in daily_rows:
+        day = row["day"]
+        generation_total_day = int(row["generation_total"] or 0)
+        evaluation_total_day = int(row["evaluation_total"] or 0)
+        reasoning_total_day = int((row["generation_reasoning"] or 0) + (row["evaluation_reasoning"] or 0))
+        non_reasoning_total_day = int(
+            (row["generation_non_reasoning"] or 0) + (row["evaluation_non_reasoning"] or 0)
+        )
+        daily.append(
+            {
+                "day": day,
+                "generation_total": generation_total_day,
+                "evaluation_total": evaluation_total_day,
+                "total": generation_total_day + evaluation_total_day,
+                "reasoning_total": reasoning_total_day,
+                "non_reasoning_total": non_reasoning_total_day,
+            }
+        )
+
+    return {
+        "generation_total": generation_total,
+        "generation_reasoning": generation_reasoning,
+        "generation_non_reasoning": generation_non_reasoning,
+        "evaluation_total": evaluation_total,
+        "evaluation_reasoning": evaluation_reasoning,
+        "evaluation_non_reasoning": evaluation_non_reasoning,
+        "overall_total": overall_total,
+        "overall_reasoning": overall_reasoning,
+        "overall_non_reasoning": overall_non_reasoning,
+        "daily": daily,
+    }
+
+
+def pair_details(conn: sqlite3.Connection) -> Iterator[sqlite3.Row]:
+    """Yield complete information for each generated Psalm pair.
+
+    The returned rows contain both generation and evaluation metadata where
+    available so that site builders can create detailed pages without issuing
+    additional queries per pair.
+    """
+
+    query = """
+        SELECT
+            pa.id AS pair_id,
+            pa.psalm_x,
+            pa.psalm_y,
+            pa.prompt,
+            pa.response_text,
+            pa.response_json,
+            pa.model AS generation_model,
+            pa.total_tokens AS generation_total_tokens,
+            pa.reasoning_tokens AS generation_reasoning_tokens,
+            pa.non_reasoning_tokens AS generation_non_reasoning_tokens,
+            pa.created_at AS generated_at,
+            pe.id AS evaluation_id,
+            pe.score,
+            pe.justification,
+            pe.evaluator_model,
+            pe.evaluation_json,
+            pe.total_tokens AS evaluation_total_tokens,
+            pe.reasoning_tokens AS evaluation_reasoning_tokens,
+            pe.non_reasoning_tokens AS evaluation_non_reasoning_tokens,
+            pe.created_at AS evaluated_at
+        FROM pair_arguments pa
+        LEFT JOIN pair_evaluations pe ON pe.pair_id = pa.id
+        ORDER BY pa.psalm_x, pa.psalm_y
+    """
+
+    cur = conn.execute(query)
+    yield from cur

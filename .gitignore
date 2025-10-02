@@ -144,6 +144,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Local database artifacts
+data/
+
 # Spyder project settings
 .spyderproject
 .spyproject

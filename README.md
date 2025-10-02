@@ -6,10 +6,18 @@ Pairwise similarity and alternative sequencing of the Psalms, with cross‑tradi
 It walks through every pair of Psalms and asks the following question:
 
         Consider Psalm X and Psalm Y (reproduced below). What arguments
-        could you make to justify that Psalm Y follows on from Psalm X?
-        Consider stylistic similarities, similarities of vocab or ideas,
-        connections to sequences of events common in ancient Israel life
-        mythology or history.
+        could you make to justify that Psalm Y logically follows on from
+        Psalm X? Consider stylistic similarities, similarities of form,
+        similarities of vocab or ideas, shared roots (if you're doing the
+        search in Hebrew), connections to sequences of events common in
+        ancient Israelite life, mythology or history shared by the two
+        psalms.
+
+        Rarer words are more significant than commoner words. Identical
+        forms are more significant than similar forms. The same word class
+        is more significant than different word classes formed from the
+        same root. Identical roots are more significant than suppletive
+        roots.
 
 Having done that, a separate process then rates the arguments on a scale
 of 0 (very weak) to 10 (very strong).
@@ -40,3 +48,5 @@ Useful environment variables:
 - `REMOTE_TARGET` – `scp` destination for deployment; leave blank to skip copying
 
 The scripts expect an OpenAI API key at `~/.openai.key`.
+
+All Python entry points are run via [`uv`](https://docs.astral.sh/uv/) (for example, `uv run psalm_pairs/generate_pairs.py`).
