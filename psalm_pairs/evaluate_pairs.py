@@ -23,15 +23,15 @@ TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "justification": {
+                        "type": "string",
+                        "description": "Short explanation for the chosen score.",
+                    },
                     "score": {
                         "type": "number",
                         "minimum": 0,
                         "maximum": 10,
                         "description": "Numeric score between 0 (very weak) and 10 (very strong).",
-                    },
-                    "justification": {
-                        "type": "string",
-                        "description": "Short explanation for the chosen score.",
                     },
                 },
                 "required": ["score", "justification"],
