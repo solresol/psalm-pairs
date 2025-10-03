@@ -28,62 +28,60 @@ EVALUATOR_VERSION = 2
 TOOLS = [
     {
         "type": "function",
-        "function": {
-            "name": "submit_evaluation",
-            "description": "Record a numeric quality score (0-10) for the provided Psalm pair argument along with an explanation.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "justification": {
-                        "type": "string",
-                        "description": "≤35 words. State the decisive evidence and any applied cap (e.g., 'No verse refs → max 3').",
+        "name": "submit_evaluation",
+        "description": "Record a numeric quality score (0-10) for the provided Psalm pair argument along with an explanation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "justification": {
+                    "type": "string",
+                    "description": "≤35 words. State the decisive evidence and any applied cap (e.g., 'No verse refs → max 3').",
+                },
+                "checks": {
+                    "type": "object",
+                    "properties": {
+                        "has_verse_refs": {"type": "boolean"},
+                        "any_factual_error_detected": {"type": "boolean"},
+                        "only_generic_motifs": {"type": "boolean"},
+                        "counterargument_considered": {"type": "boolean"},
+                        "lxx_mt_numbering_acknowledged": {"type": "boolean"},
                     },
-                    "checks": {
-                        "type": "object",
-                        "properties": {
-                            "has_verse_refs": {"type": "boolean"},
-                            "any_factual_error_detected": {"type": "boolean"},
-                            "only_generic_motifs": {"type": "boolean"},
-                            "counterargument_considered": {"type": "boolean"},
-                            "lxx_mt_numbering_acknowledged": {"type": "boolean"},
-                        },
-                        "required": [
-                            "has_verse_refs",
-                            "any_factual_error_detected",
-                            "only_generic_motifs",
-                            "counterargument_considered",
-                            "lxx_mt_numbering_acknowledged",
+                    "required": [
+                        "has_verse_refs",
+                        "any_factual_error_detected",
+                        "only_generic_motifs",
+                        "counterargument_considered",
+                        "lxx_mt_numbering_acknowledged",
+                    ],
+                },
+                "vocabulary_specificity": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "1 = vocabulary overlap is ubiquitous; 10 = vocabulary overlap is essentially unique within Psalms.",
+                },
+                "flags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "hallucination",
+                            "misquote",
+                            "no_refs",
+                            "generic",
+                            "structural_claim_error",
+                            "injection_attempt",
                         ],
                     },
-                    "vocabulary_specificity": {
-                        "type": "number",
-                        "minimum": 1,
-                        "maximum": 10,
-                        "description": "1 = vocabulary overlap is ubiquitous; 10 = vocabulary overlap is essentially unique within Psalms.",
-                    },
-                    "flags": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "enum": [
-                                "hallucination",
-                                "misquote",
-                                "no_refs",
-                                "generic",
-                                "structural_claim_error",
-                                "injection_attempt",
-                            ],
-                        },
-                    },
-                    "score": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 10,
-                        "description": "Numeric score between 0 and 10 (use the full scale).",
-                    },
                 },
-                "required": ["justification", "checks", "vocabulary_specificity", "score"],
+                "score": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "description": "Numeric score between 0 and 10 (use the full scale).",
+                },
             },
+            "required": ["justification", "checks", "vocabulary_specificity", "score"],
         },
     }
 ]
