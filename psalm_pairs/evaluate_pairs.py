@@ -162,12 +162,12 @@ def parse_tool_call(response_dict: Dict[str, Any]) -> Dict[str, Any]:
         arguments = tool_call.get("arguments")
         ordered_keys = []
         if isinstance(arguments, str):
+            # Parse once with object_pairs_hook to capture key ordering
             pairs = json.loads(arguments, object_pairs_hook=list)
             if isinstance(pairs, list):
                 ordered_keys = [key for key, _ in pairs]
-                payload = dict(pairs)
-            else:
-                payload = pairs
+            # Parse again normally to get proper dict structure (including nested dicts)
+            payload = json.loads(arguments)
         elif isinstance(arguments, dict):
             payload = arguments
             if arguments:
