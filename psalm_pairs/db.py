@@ -262,6 +262,36 @@ def counts(conn: sqlite3.Connection) -> dict[str, int]:
     return {"generated": generated, "evaluated": evaluated, "total_pairs": total_pairs}
 
 
+def daily_progress(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Return per-day counts of generated and evaluated pairs."""
+
+    query = """
+        SELECT
+            day,
+            SUM(generated_count) AS generated_count,
+            SUM(evaluated_count) AS evaluated_count
+        FROM (
+            SELECT
+                DATE(created_at) AS day,
+                COUNT(*) AS generated_count,
+                0 AS evaluated_count
+            FROM pair_arguments
+            GROUP BY DATE(created_at)
+            UNION ALL
+            SELECT
+                DATE(created_at) AS day,
+                0 AS generated_count,
+                COUNT(*) AS evaluated_count
+            FROM pair_evaluations
+            GROUP BY DATE(created_at)
+        )
+        GROUP BY day
+        ORDER BY day ASC
+    """
+    cur = conn.execute(query)
+    return list(cur)
+
+
 def recent_arguments(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row]:
     cur = conn.execute(
         """

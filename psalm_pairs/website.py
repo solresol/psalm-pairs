@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import argparse
-import json
+import base64
 import datetime as dt
 import html
+import io
+import json
 import math
 import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
+
+import numpy as np
+import umap
+from matplotlib import pyplot as plt
 
 if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parent.parent))
@@ -16,6 +22,8 @@ if __package__ in {None, ""}:
     from psalm_pairs.db import (
         connect,
         counts,
+        daily_progress,
+        daily_progress,
         evaluation_scores_by_version,
         pair_details,
         recent_arguments,
@@ -26,6 +34,7 @@ else:
     from .db import (
         connect,
         counts,
+        daily_progress,
         evaluation_scores_by_version,
         pair_details,
         recent_arguments,
@@ -79,6 +88,7 @@ DIAGNOSTICS_TEMPLATE = """<!DOCTYPE html>
   <a href=\"index.html\">Heatmap</a>
   <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"tokens.html\">Token usage</a>
+  <a href=\"umap.html\">UMAP visualizations</a>
 </nav>
 <section class=\"stats\">
   <div class=\"card\">
@@ -95,6 +105,14 @@ DIAGNOSTICS_TEMPLATE = """<!DOCTYPE html>
   </div>
   <div class=\"card\">
     <strong>{evaluation_progress:.2f}%</strong><br>Evaluations complete
+  </div>
+  <div class=\"card\">
+    <strong>{generation_projection}</strong><br>Projected generation completion
+    <small>{generation_projection_note}</small>
+  </div>
+  <div class=\"card\">
+    <strong>{evaluation_projection}</strong><br>Projected evaluation completion
+    <small>{evaluation_projection_note}</small>
   </div>
   <div class=\"card\">
     <strong>{overall_tokens}</strong><br>Total tokens used
@@ -154,6 +172,7 @@ TOKENS_TEMPLATE = """<!DOCTYPE html>
   <a href=\"index.html\">Heatmap</a>
   <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"tokens.html\">Token usage</a>
+  <a href=\"umap.html\">UMAP visualizations</a>
 </nav>
 <section class=\"grid\">
   <div class=\"card\">
@@ -198,6 +217,193 @@ TOKENS_TEMPLATE = """<!DOCTYPE html>
 """
 
 
+UMAP_TEMPLATE = """<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <title>Psalm Pair UMAP Visualizations</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 2rem; background: #f8f9fa; color: #111; }}
+    header {{ margin-bottom: 1.5rem; }}
+    nav {{ margin-bottom: 1.5rem; }}
+    nav a {{ margin-right: 1rem; color: #0b7285; text-decoration: none; }}
+    nav a:hover {{ text-decoration: underline; }}
+    main {{ display: grid; gap: 2rem; }}
+    section {{ background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+    h2 {{ margin-top: 0; color: #0b7285; }}
+    img {{ max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #dee2e6; background: #fff; }}
+    p.note {{ color: #495057; font-size: 0.95rem; }}
+  </style>
+</head>
+<body>
+<header>
+  <h1>UMAP projections of psalm relationships</h1>
+  <p class=\"note\">Distances are derived from evaluation scores with unevaluated pairs assumed to score 5/10.</p>
+</header>
+<nav>
+  <a href=\"index.html\">Heatmap</a>
+  <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
+  <a href=\"tokens.html\">Token usage</a>
+  <a href=\"umap.html\">UMAP visualizations</a>
+</nav>
+<main>
+  <section>
+    <h2>Minimum score symmetry</h2>
+    <p class=\"note\">Distance between psalms A and B is computed as 2<sup>-min(score<sub>A→B</sub>, score<sub>B→A</sub>)</sup>.</p>
+    <img src=\"data:image/png;base64,{minimum_image}\" alt=\"UMAP projection using minimum scores\">
+  </section>
+  <section>
+    <h2>Average score symmetry</h2>
+    <p class=\"note\">Distances use the mean score of both directions before applying 2<sup>-x</sup>.</p>
+    <img src=\"data:image/png;base64,{average_image}\" alt=\"UMAP projection using average scores\">
+  </section>
+  <section>
+    <h2>Maximum score symmetry</h2>
+    <p class=\"note\">Distances emphasize the stronger of the two directional scores.</p>
+    <img src=\"data:image/png;base64,{maximum_image}\" alt=\"UMAP projection using maximum scores\">
+  </section>
+</main>
+</body>
+</html>
+"""
+
+
+def _recent_activity_series(
+    daily_rows: Sequence, key: str, window_days: int
+) -> list[int]:
+    today = dt.datetime.now(dt.UTC).date()
+    start_day = today - dt.timedelta(days=window_days - 1)
+    counts_by_day = {
+        dt.date.fromisoformat(str(row["day"])): int(row[key] or 0) for row in daily_rows
+    }
+    return [
+        int(counts_by_day.get(start_day + dt.timedelta(days=offset), 0))
+        for offset in range(window_days)
+    ]
+
+
+def compute_projection_info(
+    *,
+    total: int,
+    completed: int,
+    daily_rows: Sequence,
+    key: str,
+    window_days: int = 14,
+) -> tuple[str, str]:
+    """Estimate a completion date and explain the averaging window."""
+
+    if total <= 0:
+        return "—", "&nbsp;"
+    if completed >= total:
+        return "Complete", f"All {completed} pairs processed."
+    if not daily_rows:
+        return "—", "No recorded activity yet."
+
+    series = _recent_activity_series(daily_rows, key, window_days)
+    recent_total = sum(series)
+    if recent_total == 0:
+        return "—", f"No activity in last {window_days} days."
+
+    rate = recent_total / window_days
+    remaining = max(total - completed, 0)
+    days_needed = math.ceil(remaining / rate)
+    today = dt.datetime.now(dt.UTC).date()
+    projected_date = today + dt.timedelta(days=days_needed)
+    note = f"Avg {rate:.1f}/day over last {window_days} days; {remaining} remaining"
+    return projected_date.isoformat(), note
+
+
+def fetch_score_matrix(conn) -> np.ndarray:
+    """Return a directed score matrix with defaults for missing evaluations."""
+
+    size = 150
+    matrix = np.full((size, size), 5.0, dtype=float)
+    np.fill_diagonal(matrix, 10.0)
+
+    query = """
+        SELECT pa.psalm_x, pa.psalm_y, pe.score
+        FROM pair_arguments pa
+        LEFT JOIN pair_evaluations pe ON pe.pair_id = pa.id
+        WHERE pe.score IS NOT NULL
+    """
+    for row in conn.execute(query):
+        x = int(row["psalm_x"]) - 1
+        y = int(row["psalm_y"]) - 1
+        score = float(row["score"])
+        matrix[x, y] = score
+
+    return matrix
+
+
+def _distance_matrix_from_scores(scores: np.ndarray, mode: str) -> np.ndarray:
+    if mode == "minimum":
+        combined = np.minimum(scores, scores.T)
+    elif mode == "average":
+        combined = 0.5 * (scores + scores.T)
+    elif mode == "maximum":
+        combined = np.maximum(scores, scores.T)
+    else:
+        raise ValueError(f"Unsupported mode: {mode}")
+
+    distances = np.power(2.0, -combined)
+    np.fill_diagonal(distances, 0.0)
+    # enforce symmetry numerically
+    return 0.5 * (distances + distances.T)
+
+
+def compute_umap_embeddings(distance_matrix: np.ndarray) -> np.ndarray:
+    reducer = umap.UMAP(metric="precomputed", random_state=42)
+    return reducer.fit_transform(distance_matrix)
+
+
+def _plot_embedding(coordinates: np.ndarray, title: str) -> str:
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.set_facecolor("#f8f9fa")
+    ax.grid(alpha=0.25, linestyle="--", linewidth=0.5)
+    ax.set_title(title)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+
+    ax.scatter(
+        coordinates[:, 0],
+        coordinates[:, 1],
+        s=36,
+        c="#2563eb",
+        edgecolors="#ffffff",
+        linewidths=0.5,
+        alpha=0.85,
+    )
+
+    for idx, (x, y) in enumerate(coordinates, start=1):
+        ax.text(
+            x,
+            y,
+            str(idx),
+            fontsize=6,
+            ha="center",
+            va="center",
+            color="#111",
+            alpha=0.9,
+        )
+
+    fig.tight_layout()
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    image_bytes = buffer.getvalue()
+    return base64.b64encode(image_bytes).decode("ascii")
+
+
+def generate_umap_images(conn) -> dict[str, str]:
+    scores = fetch_score_matrix(conn)
+    images: dict[str, str] = {}
+    for mode in ("minimum", "average", "maximum"):
+        distances = _distance_matrix_from_scores(scores, mode)
+        embedding = compute_umap_embeddings(distances)
+        images[mode] = _plot_embedding(embedding, f"UMAP projection ({mode})")
+    return images
+
+
 HEATMAP_TEMPLATE = """<!DOCTYPE html>
 <html lang=\"en\">
 <head>
@@ -234,6 +440,7 @@ HEATMAP_TEMPLATE = """<!DOCTYPE html>
   <a href=\"index.html\">Heatmap</a>
   <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"tokens.html\">Token usage</a>
+  <a href=\"umap.html\">UMAP visualizations</a>
 </nav>
 <section>
   <p>Generated {generated} of {total_pairs} possible ordered pairs ({progress:.2f}% complete) and evaluated {evaluated} pairs ({evaluation_progress:.2f}% complete).</p>
@@ -302,6 +509,7 @@ PAIR_TEMPLATE = """<!DOCTYPE html>
   <a href=\"../index.html\">Heatmap</a>
   <a href=\"../diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"../tokens.html\">Token usage</a>
+  <a href=\"../umap.html\">UMAP visualizations</a>
 </nav>
 <main>
   <section>
@@ -383,7 +591,17 @@ def format_row(row) -> str:
 
 
 
-def render_diagnostics_html(stats: dict, rows: Iterable[str], tokens: dict, histogram_html: str) -> str:
+def render_diagnostics_html(
+    stats: dict,
+    rows: Iterable[str],
+    tokens: dict,
+    histogram_html: str,
+    *,
+    generation_projection: str,
+    evaluation_projection: str,
+    generation_projection_note: str,
+    evaluation_projection_note: str,
+) -> str:
     generated_at = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S")
     generated = stats["generated"]
     evaluated = stats["evaluated"]
@@ -397,6 +615,10 @@ def render_diagnostics_html(stats: dict, rows: Iterable[str], tokens: dict, hist
         total_pairs=total_pairs,
         progress=progress,
         evaluation_progress=evaluation_progress,
+        generation_projection=generation_projection,
+        evaluation_projection=evaluation_projection,
+        generation_projection_note=generation_projection_note,
+        evaluation_projection_note=evaluation_projection_note,
         overall_tokens=tokens["overall_total"],
         overall_reasoning=tokens["overall_reasoning"],
         overall_non_reasoning=tokens["overall_non_reasoning"],
@@ -417,16 +639,43 @@ def write_site(output_dir: Path = DEFAULT_OUTPUT_DIR) -> Path:
         stats = counts(conn)
         recent = recent_arguments(conn, limit=50)
         tokens = token_usage_stats(conn)
+        daily_stats = daily_progress(conn)
+        generation_projection, generation_note = compute_projection_info(
+            total=stats["total_pairs"],
+            completed=stats["generated"],
+            daily_rows=daily_stats,
+            key="generated_count",
+        )
+        evaluation_projection, evaluation_note = compute_projection_info(
+            total=stats["total_pairs"],
+            completed=stats["evaluated"],
+            daily_rows=daily_stats,
+            key="evaluated_count",
+        )
         rows = [format_row(row) for row in recent]
         scores_by_version = evaluation_scores_by_version(conn)
         histogram_html = render_histogram_section(scores_by_version)
-        diagnostics_html = render_diagnostics_html(stats, rows, tokens, histogram_html)
+        diagnostics_html = render_diagnostics_html(
+            stats,
+            rows,
+            tokens,
+            histogram_html,
+            generation_projection=generation_projection,
+            evaluation_projection=evaluation_projection,
+            generation_projection_note=generation_note,
+            evaluation_projection_note=evaluation_note,
+        )
         diagnostics_path.write_text(diagnostics_html, encoding="utf-8")
 
         tokens_path = output_dir / "tokens.html"
         daily_rows = [render_daily_row(row) for row in tokens["daily"]]
         tokens_html = render_tokens_html(tokens, daily_rows)
         tokens_path.write_text(tokens_html, encoding="utf-8")
+
+        umap_path = output_dir / "umap.html"
+        umap_images = generate_umap_images(conn)
+        umap_html = render_umap_html(umap_images)
+        umap_path.write_text(umap_html, encoding="utf-8")
 
         heatmap_path = output_dir / "heatmap.html"
         heatmap_matrix = build_heatmap_matrix(conn)
@@ -570,6 +819,14 @@ def render_tokens_html(tokens: dict, daily_rows: Iterable[str]) -> str:
         evaluation_reasoning=tokens["evaluation_reasoning"],
         evaluation_non_reasoning=tokens["evaluation_non_reasoning"],
         daily_rows="\n      ".join(daily_rows),
+    )
+
+
+def render_umap_html(images: dict[str, str]) -> str:
+    return UMAP_TEMPLATE.format(
+        minimum_image=images["minimum"],
+        average_image=images["average"],
+        maximum_image=images["maximum"],
     )
 
 
