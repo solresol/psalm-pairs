@@ -9,8 +9,8 @@ if command -v git >/dev/null 2>&1; then
   git pull -q
 fi
 
-PAIRS_PER_DAY=${PAIRS_PER_DAY:-50}
-EVALS_PER_DAY=${EVALS_PER_DAY:-50}
+PAIRS_PER_DAY=${PAIRS_PER_DAY:-20}
+EVALS_PER_DAY=${EVALS_PER_DAY:-30}
 SITE_DIR=${SITE_DIR:-site}
 REMOTE_TARGET=${REMOTE_TARGET:-"merah.cassia.ifost.org.au:/var/www/vhosts/psalm-pairs.symmachus.org/htdocs/"}
 
