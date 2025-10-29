@@ -14,8 +14,8 @@ EVALS_PER_DAY=${EVALS_PER_DAY:-30}
 SITE_DIR=${SITE_DIR:-site}
 REMOTE_TARGET=${REMOTE_TARGET:-"merah.cassia.ifost.org.au:/var/www/vhosts/psalm-pairs.symmachus.org/htdocs/"}
 
-uv run psalm_pairs/generate_pairs.py --limit "$PAIRS_PER_DAY"
-uv run psalm_pairs/evaluate_pairs.py --limit "$EVALS_PER_DAY"
+uv run psalm_pairs/generate_pairs.py --limit "$PAIRS_PER_DAY" --quiet
+uv run psalm_pairs/evaluate_pairs.py --limit "$EVALS_PER_DAY" --quiet
 uv run psalm_pairs/website.py --output "$SITE_DIR"
 
 if [ -n "$REMOTE_TARGET" ]; then
