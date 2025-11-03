@@ -20,7 +20,7 @@ uv run psalm_pairs/website.py --output "$SITE_DIR"
 
 if [ -n "$REMOTE_TARGET" ]; then
   if command -v rsync >/dev/null 2>&1; then
-    rsync -av --delete "$SITE_DIR"/ "$REMOTE_TARGET"
+    rsync -a --delete "$SITE_DIR"/ "$REMOTE_TARGET"
   else
     scp -r "$SITE_DIR"/* "$REMOTE_TARGET"
   fi
