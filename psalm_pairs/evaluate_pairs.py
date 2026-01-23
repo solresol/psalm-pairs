@@ -22,7 +22,7 @@ else:
     from .psalms import format_psalm
 
 DEFAULT_LIMIT = 50
-EVALUATOR_MODEL = os.environ.get("PSALM_PAIRS_EVAL_MODEL", "gpt-5")
+EVALUATOR_MODEL = os.environ.get("PSALM_PAIRS_EVAL_MODEL", "gpt-5.2")
 EVALUATOR_VERSION = 2
 
 TOOLS = [
