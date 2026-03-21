@@ -8,6 +8,7 @@ import html
 import io
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -23,8 +24,8 @@ if __package__ in {None, ""}:
         connect,
         counts,
         daily_progress,
-        daily_progress,
         evaluation_scores_by_version,
+        evaluator_versions,
         pair_details,
         recent_arguments,
         token_usage_stats,
@@ -36,6 +37,7 @@ else:
         counts,
         daily_progress,
         evaluation_scores_by_version,
+        evaluator_versions,
         pair_details,
         recent_arguments,
         token_usage_stats,
@@ -89,6 +91,7 @@ DIAGNOSTICS_TEMPLATE = """<!DOCTYPE html>
   <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"tokens.html\">Token usage</a>
   <a href=\"umap.html\">UMAP visualizations</a>
+  <a href=\"evaluators.html\">Evaluator versions</a>
 </nav>
 <section class=\"stats\">
   <div class=\"card\">
@@ -173,6 +176,7 @@ TOKENS_TEMPLATE = """<!DOCTYPE html>
   <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"tokens.html\">Token usage</a>
   <a href=\"umap.html\">UMAP visualizations</a>
+  <a href=\"evaluators.html\">Evaluator versions</a>
 </nav>
 <section class=\"grid\">
   <div class=\"card\">
@@ -245,6 +249,7 @@ UMAP_TEMPLATE = """<!DOCTYPE html>
   <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"tokens.html\">Token usage</a>
   <a href=\"umap.html\">UMAP visualizations</a>
+  <a href=\"evaluators.html\">Evaluator versions</a>
 </nav>
 <main>
   <section>
@@ -263,6 +268,60 @@ UMAP_TEMPLATE = """<!DOCTYPE html>
     <img src=\"data:image/png;base64,{maximum_image}\" alt=\"UMAP projection using maximum scores\">
   </section>
 </main>
+</body>
+</html>
+"""
+
+
+EVALUATORS_TEMPLATE = """<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <title>Psalm Pair Evaluator Versions</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 2rem; background: #f8f9fa; color: #111; }}
+    header {{ margin-bottom: 2rem; }}
+    nav {{ margin-bottom: 1.5rem; }}
+    nav a {{ margin-right: 1rem; color: #0b7285; text-decoration: none; }}
+    nav a:hover {{ text-decoration: underline; }}
+    .stats {{ display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem; }}
+    .card {{ background: white; border-radius: 8px; padding: 1rem 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+    .versions {{ display: grid; gap: 1.5rem; }}
+    .version-card {{ background: white; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+    .version-card h2 {{ margin-top: 0; margin-bottom: 0.75rem; color: #0b7285; }}
+    .meta {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }}
+    .meta div {{ background: #f8f9fb; border-radius: 6px; padding: 0.75rem; border: 1px solid #dee2e6; }}
+    .meta strong {{ display: block; font-size: 0.85rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.35rem; }}
+    pre {{ white-space: pre-wrap; background: #f1f3f5; border-radius: 6px; padding: 1rem; line-height: 1.4; }}
+    footer {{ margin-top: 3rem; font-size: 0.9rem; color: #555; }}
+  </style>
+</head>
+<body>
+<header>
+  <h1>Evaluator versions</h1>
+  <p>Each evaluator version is the combination of a stored model name and evaluator prompt version.</p>
+</header>
+<nav>
+  <a href=\"index.html\">Heatmap</a>
+  <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
+  <a href=\"tokens.html\">Token usage</a>
+  <a href=\"umap.html\">UMAP visualizations</a>
+  <a href=\"evaluators.html\">Evaluator versions</a>
+</nav>
+<section class=\"stats\">
+  <div class=\"card\">
+    <strong>{version_count}</strong><br>Recorded evaluator versions
+  </div>
+  <div class=\"card\">
+    <strong>{evaluation_count}</strong><br>Total evaluations
+  </div>
+</section>
+<section class=\"versions\">
+  {version_cards}
+</section>
+<footer>
+  <p>Older evaluations are grouped using the stored evaluator metadata in the database.</p>
+</footer>
 </body>
 </html>
 """
@@ -293,16 +352,16 @@ def compute_projection_info(
     """Estimate a completion date and explain the averaging window."""
 
     if total <= 0:
-        return "—", "&nbsp;"
+        return "-", "&nbsp;"
     if completed >= total:
         return "Complete", f"All {completed} pairs processed."
     if not daily_rows:
-        return "—", "No recorded activity yet."
+        return "-", "No recorded activity yet."
 
     series = _recent_activity_series(daily_rows, key, window_days)
     recent_total = sum(series)
     if recent_total == 0:
-        return "—", f"No activity in last {window_days} days."
+        return "-", f"No activity in last {window_days} days."
 
     rate = recent_total / window_days
     remaining = max(total - completed, 0)
@@ -347,7 +406,6 @@ def _distance_matrix_from_scores(scores: np.ndarray, mode: str) -> np.ndarray:
 
     distances = np.power(2.0, -combined)
     np.fill_diagonal(distances, 0.0)
-    # enforce symmetry numerically
     return 0.5 * (distances + distances.T)
 
 
@@ -441,6 +499,7 @@ HEATMAP_TEMPLATE = """<!DOCTYPE html>
   <a href=\"diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"tokens.html\">Token usage</a>
   <a href=\"umap.html\">UMAP visualizations</a>
+  <a href=\"evaluators.html\">Evaluator versions</a>
 </nav>
 <section>
   <p>Generated {generated} of {total_pairs} possible ordered pairs ({progress:.2f}% complete) and evaluated {evaluated} pairs ({evaluation_progress:.2f}% complete).</p>
@@ -510,6 +569,7 @@ PAIR_TEMPLATE = """<!DOCTYPE html>
   <a href=\"../diagnostics.html\">Diagnostics &amp; progress</a>
   <a href=\"../tokens.html\">Token usage</a>
   <a href=\"../umap.html\">UMAP visualizations</a>
+  <a href=\"../evaluators.html\">Evaluator versions</a>
 </nav>
 <main>
   <section>
@@ -539,7 +599,7 @@ PAIR_TEMPLATE = """<!DOCTYPE html>
   </section>
 
   <section>
-    <h2>Prompt</h2>
+    <h2>Generation prompt</h2>
     <pre>{prompt_text}</pre>
   </section>
 </main>
@@ -574,7 +634,12 @@ def format_row(row) -> str:
         first_line = row["response_text"].strip().splitlines()[0]
         excerpt = html.escape(first_line[:160])
     if row["score"] is not None:
-        version_suffix = f" (v{row['evaluator_version']})" if row["evaluator_version"] is not None else ""
+        if row["evaluator_prompt_version"]:
+            version_suffix = f" ({row['evaluator_prompt_version']})"
+        elif row["evaluator_version"] is not None:
+            version_suffix = f" (v{row['evaluator_version']})"
+        else:
+            version_suffix = ""
         evaluation = f"Score {row['score']}{version_suffix} on {row['evaluated_at']}"
     else:
         evaluation = "Pending"
@@ -588,7 +653,6 @@ def format_row(row) -> str:
         evaluation=html.escape(evaluation),
         excerpt=excerpt,
     )
-
 
 
 def render_diagnostics_html(
@@ -677,6 +741,11 @@ def write_site(output_dir: Path = DEFAULT_OUTPUT_DIR) -> Path:
         umap_html = render_umap_html(umap_images)
         umap_path.write_text(umap_html, encoding="utf-8")
 
+        evaluators_path = output_dir / "evaluators.html"
+        evaluator_rows = evaluator_versions(conn)
+        evaluators_html = render_evaluators_html(evaluator_rows)
+        evaluators_path.write_text(evaluators_html, encoding="utf-8")
+
         heatmap_path = output_dir / "heatmap.html"
         heatmap_matrix = build_heatmap_matrix(conn)
         heatmap_html = render_heatmap_html(heatmap_matrix, stats)
@@ -729,6 +798,16 @@ def render_pair_page(row) -> str:
             evaluation_details.append(
                 f"<p>Evaluator version: v{row['evaluator_version']}</p>"
             )
+        if row["evaluator_prompt_version"]:
+            version_url = (
+                "../evaluators.html#"
+                + evaluator_version_anchor(row["evaluator_model"], row["evaluator_prompt_version"])
+            )
+            evaluation_details.append(
+                "<p>Evaluator prompt version: "
+                f"<a href=\"{html.escape(version_url, quote=True)}\">"
+                f"{html.escape(row['evaluator_prompt_version'])}</a></p>"
+            )
         evaluation_details.append(evaluation_tokens)
         checklist_pairs = [
             ("Has verse refs", row["has_verse_refs"]),
@@ -744,7 +823,7 @@ def render_pair_page(row) -> str:
             items = []
             for label, value in checklist_pairs:
                 if value is None:
-                    status = "—"
+                    status = "-"
                 else:
                     try:
                         status_bool = bool(int(value))
@@ -830,6 +909,56 @@ def render_umap_html(images: dict[str, str]) -> str:
     )
 
 
+def render_evaluators_html(rows: list) -> str:
+    version_cards = [render_evaluator_version_card(row) for row in rows]
+    cards_html = "\n      ".join(version_cards) if version_cards else "<p>No evaluations recorded yet.</p>"
+    evaluation_count = sum(int(row["evaluation_count"] or 0) for row in rows)
+    return EVALUATORS_TEMPLATE.format(
+        version_count=len(rows),
+        evaluation_count=evaluation_count,
+        version_cards=cards_html,
+    )
+
+
+def render_evaluator_version_card(row) -> str:
+    anchor = evaluator_version_anchor(row["evaluator_model"], row["evaluator_prompt_version"])
+    average_score = row["average_score"]
+    if average_score is None:
+        average_score_text = "Unknown"
+    else:
+        average_score_text = f"{float(average_score):.2f}"
+    prompt_template = html.escape(row["evaluator_prompt_template"] or "")
+    return f"""
+<article class="version-card" id="{anchor}">
+  <h2>{html.escape(row["evaluator_model"] or "Unknown")} / {html.escape(row["evaluator_prompt_version"] or "unrecorded")}</h2>
+  <div class="meta">
+    <div>
+      <strong>Evaluations</strong>
+      <span>{row["evaluation_count"]}</span>
+    </div>
+    <div>
+      <strong>Average Score</strong>
+      <span>{average_score_text}</span>
+    </div>
+    <div>
+      <strong>First Seen</strong>
+      <span>{html.escape(row["first_evaluated_at"] or "Unknown")}</span>
+    </div>
+    <div>
+      <strong>Last Seen</strong>
+      <span>{html.escape(row["last_evaluated_at"] or "Unknown")}</span>
+    </div>
+    <div>
+      <strong>Total Tokens</strong>
+      <span>{row["total_tokens"]}</span>
+    </div>
+  </div>
+  <h3>Prompt Template</h3>
+  <pre>{prompt_template}</pre>
+</article>
+""".strip()
+
+
 def render_daily_row(row: dict) -> str:
     return (
         "<tr>"
@@ -877,7 +1006,9 @@ def render_histogram_section(scores_by_version: dict[int, list[float]]) -> str:
             )
 
         meta_text = (
-            f"<p class=\"meta\">Total: {total} · Avg: {avg:.2f}</p>" if total else "<p class=\"meta\">No evaluations recorded.</p>"
+            f"<p class=\"meta\">Total: {total} · Avg: {avg:.2f}</p>"
+            if total
+            else "<p class=\"meta\">No evaluations recorded.</p>"
         )
         card = (
             "<div class=\"histogram-card\">"
@@ -895,9 +1026,16 @@ def render_histogram_section(scores_by_version: dict[int, list[float]]) -> str:
 def _score_to_color(score: float) -> str:
     ratio = max(0.0, min(1.0, score / 10.0))
     channels = [
-        int(round(low + (high - low) * ratio)) for low, high in zip(HEATMAP_LOW_SCORE_RGB, HEATMAP_HIGH_SCORE_RGB)
+        int(round(low + (high - low) * ratio))
+        for low, high in zip(HEATMAP_LOW_SCORE_RGB, HEATMAP_HIGH_SCORE_RGB)
     ]
     return "#{:02x}{:02x}{:02x}".format(*channels)
+
+
+def evaluator_version_anchor(model: str | None, prompt_version: str | None) -> str:
+    base = f"{model or 'unknown'}-{prompt_version or 'unrecorded'}"
+    slug = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")
+    return slug or "evaluator-version"
 
 
 def build_heatmap_matrix(conn) -> list[list[dict[str, str | None]]]:

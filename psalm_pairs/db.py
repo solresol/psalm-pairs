@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 from . import DB_PATH
+from .evaluator_config import evaluator_prompt_metadata_for_version
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pair_arguments (
@@ -34,6 +35,8 @@ CREATE TABLE IF NOT EXISTS pair_evaluations (
     justification TEXT NOT NULL,
     evaluator_model TEXT NOT NULL,
     evaluator_version INTEGER NOT NULL DEFAULT 1,
+    evaluator_prompt_version TEXT,
+    evaluator_prompt_template TEXT,
     evaluation_json TEXT NOT NULL,
     total_tokens INTEGER,
     reasoning_tokens INTEGER,
@@ -61,6 +64,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     ensure_column(conn, "pair_evaluations", "reasoning_tokens", "INTEGER")
     ensure_column(conn, "pair_evaluations", "non_reasoning_tokens", "INTEGER")
     ensure_column(conn, "pair_evaluations", "evaluator_version", "INTEGER")
+    ensure_column(conn, "pair_evaluations", "evaluator_prompt_version", "TEXT")
+    ensure_column(conn, "pair_evaluations", "evaluator_prompt_template", "TEXT")
     ensure_column(conn, "pair_evaluations", "has_verse_refs", "INTEGER")
     ensure_column(conn, "pair_evaluations", "any_factual_error_detected", "INTEGER")
     ensure_column(conn, "pair_evaluations", "only_generic_motifs", "INTEGER")
@@ -71,14 +76,46 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "UPDATE pair_evaluations SET evaluator_version = 1 WHERE evaluator_version IS NULL"
     )
+    backfill_legacy_evaluator_prompt_metadata(conn)
     conn.commit()
 
 
-def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> bool:
     cur = conn.execute(f"PRAGMA table_info({table})")
     if any(row[1] == column for row in cur):
-        return
+        return False
     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    return True
+
+
+def backfill_legacy_evaluator_prompt_metadata(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, evaluator_version
+        FROM pair_evaluations
+        WHERE evaluator_prompt_version IS NULL OR evaluator_prompt_template IS NULL
+        """
+    ).fetchall()
+    if not rows:
+        return
+
+    updates = []
+    for row in rows:
+        prompt_version, prompt_template = evaluator_prompt_metadata_for_version(
+            row["evaluator_version"]
+        )
+        updates.append((prompt_version, prompt_template, row["id"]))
+
+    conn.executemany(
+        """
+        UPDATE pair_evaluations
+        SET
+            evaluator_prompt_version = COALESCE(evaluator_prompt_version, ?),
+            evaluator_prompt_template = COALESCE(evaluator_prompt_template, ?)
+        WHERE id = ?
+        """,
+        updates,
+    )
 
 
 def connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
@@ -140,7 +177,6 @@ def insert_pair_argument(
     conn.commit()
     if cur.lastrowid:
         return cur.lastrowid
-    # fetch id if already existed
     cur = conn.execute(
         "SELECT id FROM pair_arguments WHERE psalm_x = ? AND psalm_y = ?",
         (psalm_x, psalm_y),
@@ -203,6 +239,8 @@ def insert_evaluation(
     justification: str,
     evaluator_model: str,
     evaluator_version: int,
+    evaluator_prompt_version: str,
+    evaluator_prompt_template: str,
     evaluation_json: dict,
     checks: dict[str, bool],
     flags: list[str] | None = None,
@@ -223,11 +261,11 @@ def insert_evaluation(
         """
         INSERT OR REPLACE INTO pair_evaluations
             (pair_id, score, justification, evaluator_model, evaluator_version,
-             evaluation_json, total_tokens, reasoning_tokens, non_reasoning_tokens,
-             has_verse_refs, any_factual_error_detected, only_generic_motifs,
-             counterargument_considered, lxx_mt_numbering_acknowledged, vocabulary_specificity,
-             flags, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             evaluator_prompt_version, evaluator_prompt_template, evaluation_json,
+             total_tokens, reasoning_tokens, non_reasoning_tokens, has_verse_refs,
+             any_factual_error_detected, only_generic_motifs, counterargument_considered,
+             lxx_mt_numbering_acknowledged, vocabulary_specificity, flags, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             pair_id,
@@ -235,6 +273,8 @@ def insert_evaluation(
             justification,
             evaluator_model,
             evaluator_version,
+            evaluator_prompt_version,
+            evaluator_prompt_template,
             json.dumps(evaluation_json, ensure_ascii=False),
             total_tokens,
             reasoning_tokens,
@@ -296,7 +336,8 @@ def recent_arguments(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.
     cur = conn.execute(
         """
         SELECT pa.id, pa.psalm_x, pa.psalm_y, pa.response_text, pa.created_at,
-               pe.score, pe.justification, pe.evaluator_version, pe.created_at AS evaluated_at
+               pe.score, pe.justification, pe.evaluator_version, pe.evaluator_prompt_version,
+               pe.created_at AS evaluated_at
         FROM pair_arguments pa
         LEFT JOIN pair_evaluations pe ON pe.pair_id = pa.id
         ORDER BY pa.id DESC
@@ -395,7 +436,9 @@ def token_usage_stats(conn: sqlite3.Connection) -> dict:
         day = row["day"]
         generation_total_day = int(row["generation_total"] or 0)
         evaluation_total_day = int(row["evaluation_total"] or 0)
-        reasoning_total_day = int((row["generation_reasoning"] or 0) + (row["evaluation_reasoning"] or 0))
+        reasoning_total_day = int(
+            (row["generation_reasoning"] or 0) + (row["evaluation_reasoning"] or 0)
+        )
         non_reasoning_total_day = int(
             (row["generation_non_reasoning"] or 0) + (row["evaluation_non_reasoning"] or 0)
         )
@@ -437,6 +480,29 @@ def evaluation_scores_by_version(conn: sqlite3.Connection) -> dict[int, list[flo
     return {version: scores for version, scores in buckets.items()}
 
 
+def evaluator_versions(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    cur = conn.execute(
+        """
+        SELECT
+            evaluator_model,
+            COALESCE(evaluator_prompt_version, 'unrecorded') AS evaluator_prompt_version,
+            COALESCE(
+                evaluator_prompt_template,
+                'Prompt metadata was not recorded for this evaluation cohort.'
+            ) AS evaluator_prompt_template,
+            COUNT(*) AS evaluation_count,
+            ROUND(AVG(score), 2) AS average_score,
+            MIN(created_at) AS first_evaluated_at,
+            MAX(created_at) AS last_evaluated_at,
+            COALESCE(SUM(total_tokens), 0) AS total_tokens
+        FROM pair_evaluations
+        GROUP BY evaluator_model, evaluator_prompt_version, evaluator_prompt_template
+        ORDER BY last_evaluated_at DESC, evaluator_model ASC, evaluator_prompt_version ASC
+        """
+    )
+    return list(cur)
+
+
 def pair_details(conn: sqlite3.Connection) -> Iterator[sqlite3.Row]:
     """Yield complete information for each generated Psalm pair.
 
@@ -463,6 +529,8 @@ def pair_details(conn: sqlite3.Connection) -> Iterator[sqlite3.Row]:
             pe.justification,
             pe.evaluator_model,
             pe.evaluator_version,
+            pe.evaluator_prompt_version,
+            pe.evaluator_prompt_template,
             pe.evaluation_json,
             pe.total_tokens AS evaluation_total_tokens,
             pe.reasoning_tokens AS evaluation_reasoning_tokens,
