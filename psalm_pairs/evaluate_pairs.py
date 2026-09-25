@@ -32,7 +32,7 @@ else:
     from .openai_client import build_client, extract_usage_tokens, response_to_dict
 
 DEFAULT_LIMIT = 50
-EVALUATOR_MODEL = os.environ.get("PSALM_PAIRS_EVAL_MODEL", "gpt-5.4")
+EVALUATOR_MODEL = os.environ.get("PSALM_PAIRS_EVAL_MODEL", "gpt-6-sol")
 EVALUATOR_VERSION = 2
 
 TOOLS = [

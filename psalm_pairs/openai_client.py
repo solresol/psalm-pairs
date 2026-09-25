@@ -8,27 +8,31 @@ from typing import Any, Dict, Optional
 
 from openai import OpenAI
 
-OPENAI_KEY_PATH = Path.home() / ".openai.key"
+OPENAI_KEY_PATH = Path(
+    os.environ.get("PSALM_PAIRS_OPENAI_KEY_PATH", "~/.openai.psalmer.key")
+).expanduser()
 
 
 def load_api_key() -> str:
+    if OPENAI_KEY_PATH.exists():
+        key = OPENAI_KEY_PATH.read_text(encoding="utf-8").strip()
+        if not key:
+            raise RuntimeError(f"{OPENAI_KEY_PATH} is empty")
+        os.environ["OPENAI_API_KEY"] = key
+        return key
+
     key = os.environ.get("OPENAI_API_KEY")
     if key:
         return key
-    if not OPENAI_KEY_PATH.exists():
-        raise FileNotFoundError(
-            f"Expected to find OpenAI API key at {OPENAI_KEY_PATH}. Set OPENAI_API_KEY or create the file."
-        )
-    key = OPENAI_KEY_PATH.read_text(encoding="utf-8").strip()
-    if not key:
-        raise RuntimeError(f"{OPENAI_KEY_PATH} is empty")
-    os.environ["OPENAI_API_KEY"] = key
-    return key
+
+    raise FileNotFoundError(
+        f"Expected to find OpenAI API key at {OPENAI_KEY_PATH}. "
+        "Set OPENAI_API_KEY or create the file."
+    )
 
 
 def build_client() -> OpenAI:
-    load_api_key()
-    return OpenAI()
+    return OpenAI(api_key=load_api_key())
 
 
 def response_to_dict(response: Any) -> Dict[str, Any]:

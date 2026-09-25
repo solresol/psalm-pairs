@@ -10,7 +10,7 @@ This project analyzes pairwise similarity between the 150 Psalms using LLM-gener
 2. Evaluates that argument on a 0-10 scale using a separate LLM call with strict rubric
 3. Generates a static website showing results via heatmap and detailed pages
 
-The system uses OpenAI's Responses API (GPT-5.2 by default) with reasoning tokens for both generation and evaluation.
+The system uses OpenAI's Responses API (GPT-6 Sol by default) with reasoning tokens for both generation and evaluation.
 
 ## Commands
 
@@ -35,9 +35,11 @@ uv run psalm_pairs/website.py --output site
 ```
 
 ### Environment Variables
-- `OPENAI_API_KEY` or `~/.openai.key` - OpenAI API key (required)
-- `PSALM_PAIRS_MODEL` - Model for generation (default: `gpt-5.2`)
-- `PSALM_PAIRS_EVAL_MODEL` - Model for evaluation (default: `gpt-5.2`)
+- `~/.openai.psalmer.key` - Psalm-specific OpenAI API key. This key file is
+  preferred over any generic `OPENAI_API_KEY`; set
+  `PSALM_PAIRS_OPENAI_KEY_PATH` to override the file path.
+- `PSALM_PAIRS_MODEL` - Model for generation (default: `gpt-6-sol`)
+- `PSALM_PAIRS_EVAL_MODEL` - Model for evaluation (default: `gpt-6-sol`)
 - `PAIRS_PER_DAY` - Number of new arguments to generate (default: 50)
 - `EVALS_PER_DAY` - Number of evaluations to perform (default: 50)
 - `SITE_DIR` - Output directory for website (default: `site`)

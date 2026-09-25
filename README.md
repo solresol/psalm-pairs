@@ -46,7 +46,11 @@ Useful environment variables:
 - `EVALS_PER_DAY` – number of evaluations to perform (default 50)
 - `SITE_DIR` – output directory for the generated website (default `site`)
 - `REMOTE_TARGET` – `scp` destination for deployment; leave blank to skip copying
+- `PSALM_PAIRS_MODEL` – generation model (default `gpt-6-sol`)
+- `PSALM_PAIRS_EVAL_MODEL` – evaluation model (default `gpt-6-sol`)
 
-The scripts expect an OpenAI API key at `~/.openai.key`.
+The scripts prefer the Psalm-specific OpenAI API key at `~/.openai.psalmer.key`
+over any generic `OPENAI_API_KEY` in the environment. Set
+`PSALM_PAIRS_OPENAI_KEY_PATH` to point at a different key file if needed.
 
 All Python entry points are run via [`uv`](https://docs.astral.sh/uv/) (for example, `uv run psalm_pairs/generate_pairs.py`).
