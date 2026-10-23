@@ -48,6 +48,20 @@ Useful environment variables:
 - `REMOTE_TARGET` – `scp` destination for deployment; leave blank to skip copying
 - `PSALM_PAIRS_MODEL` – generation model (default `gpt-6-sol`)
 - `PSALM_PAIRS_EVAL_MODEL` – evaluation model (default `gpt-6-sol`)
+- `PSALM_PAIRS_LOG_DIR` – private per-run cron logs (default
+  `${XDG_STATE_HOME:-$HOME/.local/state}/psalm-pairs`)
+
+Routine cron output is saved in these logs without producing success-only mail.
+Unexpected stderr (including warnings) still reaches cron. A failed command also
+replays its stdout and reports a nonzero exit and the log path. Log initialization
+failures stop the run before any generation; later logging failures also return
+nonzero and replay captured diagnostics. Logs are mode `0600`, one file per run;
+they are not committed or automatically deleted.
+
+Run the standard-library regression tests with
+`python3 -m unittest discover -s tests -v`. The embedding check additionally
+requires the existing project dependencies; it uses deterministic synthetic data
+and makes no API calls or database changes.
 
 The scripts prefer the Psalm-specific OpenAI API key at `~/.openai.psalmer.key`
 over any generic `OPENAI_API_KEY` in the environment. Set

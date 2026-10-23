@@ -10,6 +10,7 @@ import json
 import math
 import re
 import sys
+import warnings
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -410,8 +411,16 @@ def _distance_matrix_from_scores(scores: np.ndarray, mode: str) -> np.ndarray:
 
 
 def compute_umap_embeddings(distance_matrix: np.ndarray) -> np.ndarray:
-    reducer = umap.UMAP(metric="precomputed", random_state=42)
-    return reducer.fit_transform(distance_matrix)
+    reducer = umap.UMAP(metric="precomputed", random_state=42, n_jobs=1)
+    # This renderer only embeds distances; it never uses inverse_transform.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"^using precomputed metric; inverse_transform will be unavailable$",
+            category=UserWarning,
+            module=r"^umap\.umap_$",
+        )
+        return reducer.fit_transform(distance_matrix)
 
 
 def _plot_embedding(coordinates: np.ndarray, title: str) -> str:

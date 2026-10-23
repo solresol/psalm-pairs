@@ -3,10 +3,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Capture routine output without hiding warnings, command failures, or log failures.
+if [[ "${1:-}" != "--run-workflow" ]]; then
+  exec python3 scripts/log_cron.py "$BASH" "$PWD/cronscript.sh" --run-workflow
+fi
+
 export UV_PROJECT_ENVIRONMENT=$(pwd)/.venv
 
 if command -v git >/dev/null 2>&1; then
-  git pull -q
+  git pull --ff-only -q
 fi
 
 PAIRS_PER_DAY=${PAIRS_PER_DAY:-1}
